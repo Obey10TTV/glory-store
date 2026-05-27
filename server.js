@@ -14,7 +14,14 @@ const adminRoutes = require('./routes/adminRoutes')
 
 const app = express()
 
-app.use(cors())
+app.use(cors({
+  origin: [
+    'http://localhost:3000',
+    'http://localhost:3001',
+    'https://glory-frontend-gray.vercel.app'
+  ],
+  credentials: true
+}))
 app.use(express.json())
 
 mongoose.connect(process.env.MONGO_URI)
