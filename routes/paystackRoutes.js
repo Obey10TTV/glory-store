@@ -1,25 +1,8 @@
 const express = require('express')
 const router = express.Router()
 const https = require('https')
-const jwt = require('jsonwebtoken')
+const { protect } = require('../middleware/auth')
 const Order = require('../models/order')
-
-// Middleware to protect routes
-const protect = async (req, res, next) => {
-  let token
-  if (req.headers.authorization && req.headers.authorization.startsWith('Bearer')) {
-    try {
-      token = req.headers.authorization.split(' ')[1]
-      const decoded = jwt.verify(token, process.env.JWT_SECRET)
-      req.user = decoded
-      next()
-    } catch (error) {
-      res.status(401).json({ message: 'Not authorized' })
-    }
-  } else {
-    res.status(401).json({ message: 'Not authorized, no token' })
-  }
-}
 
 // INITIALIZE PAYMENT - POST /api/paystack/initialize
 router.post('/initialize', protect, async (req, res) => {

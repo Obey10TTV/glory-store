@@ -2,25 +2,8 @@ const express = require('express')
 const router = express.Router()
 const Product = require('../models/product')
 const User = require('../models/user')
-const jwt = require('jsonwebtoken')
+const { protect } = require('../middleware/auth')
 
-// Middleware to protect routes
-const protect = async (req, res, next) => {
-  let token
-  if (req.headers.authorization && req.headers.authorization.startsWith('Bearer')) {
-    try {
-      token = req.headers.authorization.split(' ')[1]
-      const decoded = jwt.verify(token, process.env.JWT_SECRET)
-      const user = await User.findById(decoded.id)
-      req.user = user
-      next()
-    } catch (error) {
-      res.status(401).json({ message: 'Not authorized' })
-    }
-  } else {
-    res.status(401).json({ message: 'Not authorized, no token' })
-  }
-}
 
 // ADD REVIEW - POST /api/reviews/:productId
 router.post('/:productId', protect, async (req, res) => {
