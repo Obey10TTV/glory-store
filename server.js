@@ -5,8 +5,8 @@ const express = require('express')
 const mongoose = require('mongoose')
 const cors = require('cors')
 const helmet = require('helmet')
-const rateLimit = require('express-rate-limit')
 const mongoSanitize = require('express-mongo-sanitize')
+const fs = require('fs')
 
 const userRoutes = require('./routes/userRoutes')
 const productRoutes = require('./routes/productRoutes')
@@ -16,16 +16,52 @@ const reviewRoutes = require('./routes/reviewRoutes')
 const uploadRoutes = require('./routes/uploadRoutes')
 const adminRoutes = require('./routes/adminRoutes')
 
+const {
+  generalLimiter,
+  authLimiter,
+  uploadLimiter,
+  paymentLimiter,
+  sanitizeInput,
+  ipProtection,
+  securityHeaders,
+  hppProtection
+} = require('./middleware/security')
+
+const { httpLogger, logger } = require('./middleware/logger')
+
 const app = express()
+
+// ── CREATE LOGS DIRECTORY ──
+if (!fs.existsSync('logs')) {
+  fs.mkdirSync('logs')
+}
 
 // ── SECURITY MIDDLEWARE ──
 
-// 1. Helmet — sets secure HTTP headers
+// 1. Trust proxy (for Railway)
+app.set('trust proxy', 1)
+
+// 2. HTTP Logger
+app.use(httpLogger)
+
+// 3. Security headers
+app.use(securityHeaders)
+
+// 4. Helmet
 app.use(helmet({
-  crossOriginResourcePolicy: { policy: 'cross-origin' }
+  crossOriginResourcePolicy: { policy: 'cross-origin' },
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
+      fontSrc: ["'self'", "https://fonts.gstatic.com"],
+      imgSrc: ["'self'", "data:", "https://res.cloudinary.com", "https://images.pexels.com"],
+      scriptSrc: ["'self'"],
+    }
+  }
 }))
 
-// 2. CORS — only allow our frontend
+// 5. CORS
 app.use(cors({
   origin: [
     'http://localhost:3000',
@@ -37,51 +73,44 @@ app.use(cors({
   allowedHeaders: ['Content-Type', 'Authorization']
 }))
 
-// 3. Body parser
+// 6. Body parser
 app.use(express.json({ limit: '10mb' }))
 app.use(express.urlencoded({ extended: true, limit: '10mb' }))
 
-// 4. MongoDB sanitize — prevent NoSQL injection
+// 7. MongoDB sanitize — NoSQL injection prevention
 app.use(mongoSanitize())
 
-// 5. General rate limiter — max 100 requests per 15 minutes
-const generalLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 100,
-  message: { message: 'Too many requests, please try again later.' },
-  standardHeaders: true,
-  legacyHeaders: false
-})
-app.use(generalLimiter)
+// 8. XSS sanitization
+app.use(sanitizeInput)
 
-// 6. Strict rate limiter for auth routes — max 10 attempts per 15 minutes
-const authLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 10,
-  message: { message: 'Too many login attempts, please try again later.' },
-  standardHeaders: true,
-  legacyHeaders: false
-})
+// 9. HPP — HTTP Parameter Pollution
+app.use(hppProtection)
+
+// 10. IP protection
+app.use(ipProtection)
+
+// 11. General rate limiter
+app.use(generalLimiter)
 
 // ── DATABASE ──
 mongoose.connect(process.env.MONGO_URI)
-  .then(() => console.log('MongoDB connected successfully'))
-  .catch((err) => console.log('MongoDB connection error:', err))
+  .then(() => logger.info('MongoDB connected successfully'))
+  .catch((err) => logger.error('MongoDB connection error:', err))
 
-// ── ROUTES ──
+// ── ROUTES WITH SPECIFIC LIMITERS ──
 app.use('/api/users/login', authLimiter)
 app.use('/api/users/register', authLimiter)
 app.use('/api/users', userRoutes)
 app.use('/api/products', productRoutes)
 app.use('/api/orders', orderRoutes)
-app.use('/api/paystack', paystackRoutes)
+app.use('/api/paystack', paymentLimiter, paystackRoutes)
 app.use('/api/reviews', reviewRoutes)
-app.use('/api/upload', uploadRoutes)
+app.use('/api/upload', uploadLimiter, uploadRoutes)
 app.use('/api/admin', adminRoutes)
 
 // ── HEALTH CHECK ──
 app.get('/', (req, res) => {
-  res.json({ 
+  res.json({
     message: 'Glory Store API is running',
     version: '1.0.0',
     status: 'healthy'
@@ -95,15 +124,24 @@ app.use((req, res) => {
 
 // ── GLOBAL ERROR HANDLER ──
 app.use((err, req, res, next) => {
-  console.error(err.stack)
+  logger.error({
+    message: err.message,
+    stack: err.stack,
+    url: req.url,
+    method: req.method,
+    ip: req.ip
+  })
+
+  // Don't leak error details in production
   res.status(err.status || 500).json({
-    message: err.message || 'Something went wrong on our end',
-    ...(process.env.NODE_ENV === 'development' && { stack: err.stack })
+    message: process.env.NODE_ENV === 'production'
+      ? 'Something went wrong on our end'
+      : err.message
   })
 })
 
 const PORT = process.env.PORT || 5000
 
 app.listen(PORT, () => {
-  console.log(`Glory Store server running on port ${PORT}`)
+  logger.info(`Glory Store server running on port ${PORT}`)
 })
