@@ -2,6 +2,10 @@ const express = require('express')
 const router = express.Router()
 const Product = require('../models/product')
 const { protect, seller } = require('../middleware/auth')
+const {
+  validateProduct,
+  handleValidationErrors
+} = require('../middleware/security')
 
 // GET ALL PRODUCTS - Public
 router.get('/', async (req, res) => {
@@ -27,7 +31,7 @@ router.get('/:id', async (req, res) => {
 })
 
 // CREATE PRODUCT - Seller only
-router.post('/', protect, seller, async (req, res) => {
+router.post('/', protect, seller, validateProduct, handleValidationErrors, async (req, res) => {
   try {
     const { name, price, description, category, image, brand, countInStock } = req.body
     const product = await Product.create({
@@ -48,7 +52,6 @@ router.put('/:id', protect, seller, async (req, res) => {
     if (!product) {
       return res.status(404).json({ message: 'Product not found' })
     }
-    // Only allow seller who owns the product or admin
     if (product.seller.toString() !== req.user._id.toString() && !req.user.isAdmin) {
       return res.status(403).json({ message: 'Not authorized to update this product' })
     }
