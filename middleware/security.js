@@ -162,8 +162,8 @@ const validateOrder = [
     .notEmpty()
     .withMessage('Full name is required'),
   body('shippingAddress.phone')
-    .matches(/^(\+234|0)[789][01]\d{8}$/)
-    .withMessage('Please provide a valid Nigerian phone number'),
+    .matches(/^(\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}$/)
+    .withMessage('Please provide a valid phone number'),
   body('paymentMethod')
     .isIn(['Paystack', 'PayOnDelivery', 'Crypto'])
     .withMessage('Invalid payment method'),
