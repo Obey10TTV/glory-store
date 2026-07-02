@@ -30,7 +30,7 @@ const products = [
     price: 9800,
     description: 'Lightweight daily sunscreen with SPF 50 protection. No white cast. Suitable for all Nigerian skin tones.',
     category: 'Skincare',
-    image: 'https://images.pexels.com/photos/3738337/pexels-photo-3738337.jpeg?auto=compress&cs=tinysrgb&w=400',
+    image: 'https://images.pexels.com/photos/4465124/pexels-photo-4465124.jpeg?auto=compress&cs=tinysrgb&w=400',
     brand: 'Dr. Sheth\'s',
     countInStock: 45
   },
