@@ -118,9 +118,25 @@ app.use(ipProtection)
 app.use(generalLimiter)
 
 // ── DATABASE ──
-mongoose.connect(process.env.MONGO_URI)
-  .then(() => logger.info('MongoDB connected successfully'))
-  .catch((err) => logger.error('MongoDB connection error:', err))
+const connectDatabase = async () => {
+  const mongoUri = process.env.MONGO_URI
+
+  if (!mongoUri) {
+    logger.error('MongoDB connection error: MONGO_URI is not configured')
+    return
+  }
+
+  try {
+    await mongoose.connect(mongoUri, {
+      serverSelectionTimeoutMS: 15000
+    })
+    logger.info('MongoDB connected successfully')
+  } catch (err) {
+    logger.error('MongoDB connection error:', err)
+  }
+}
+
+connectDatabase()
 
 // ── ROUTES WITH SPECIFIC LIMITERS ──
 app.use('/api/users/login', authLimiter)
