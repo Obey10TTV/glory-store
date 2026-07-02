@@ -30,6 +30,40 @@ const {
 const { httpLogger, logger } = require('./middleware/logger')
 
 const app = express()
+app.disable('x-powered-by')
+
+const fallbackAllowedOrigins = [
+  'http://localhost:3000',
+  'http://localhost:3001',
+  'https://glory-frontend-gray.vercel.app'
+]
+
+const configuredOrigins = [
+  process.env.CLIENT_ORIGIN,
+  process.env.CLIENT_URL,
+  process.env.FRONTEND_URL,
+  process.env.CORS_ORIGIN,
+  process.env.CORS_ORIGINS
+]
+  .flatMap((value) => (value || '').split(','))
+  .map((value) => value.trim().replace(/\/$/, ''))
+  .filter(Boolean)
+
+const allowedOrigins = [...new Set([...configuredOrigins, ...fallbackAllowedOrigins])]
+
+const corsOptions = {
+  origin: (origin, callback) => {
+    if (!origin || allowedOrigins.includes(origin)) {
+      return callback(null, true)
+    }
+
+    return callback(new Error('Not allowed by CORS'))
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  optionsSuccessStatus: 204
+}
 
 // ── CREATE LOGS DIRECTORY ──
 if (!fs.existsSync('logs')) {
@@ -62,16 +96,7 @@ app.use(helmet({
 }))
 
 // 5. CORS
-app.use(cors({
-  origin: [
-    'http://localhost:3000',
-    'http://localhost:3001',
-    'https://glory-frontend-gray.vercel.app'
-  ],
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE'],
-  allowedHeaders: ['Content-Type', 'Authorization']
-}))
+app.use(cors(corsOptions))
 
 // 6. Body parser
 app.use(express.json({ limit: '10mb' }))

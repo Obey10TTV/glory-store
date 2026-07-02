@@ -24,12 +24,13 @@ const orderSchema = new mongoose.Schema({
     address: { type: String, required: true },
     city: { type: String, required: true },
     state: { type: String, required: true },
+    postalCode: { type: String, required: true },
     phone: { type: String, required: true }
   },
   paymentMethod: {
     type: String,
     required: true,
-    enum: ['Paystack', 'PayOnDelivery']
+    enum: ['Paystack', 'PayOnDelivery', 'Crypto']
   },
   paymentResult: {
     id: String,

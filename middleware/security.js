@@ -1,5 +1,4 @@
 const rateLimit = require('express-rate-limit')
-const mongoSanitize = require('express-mongo-sanitize')
 const hpp = require('hpp')
 const xss = require('xss')
 const { body, validationResult } = require('express-validator')
@@ -157,20 +156,38 @@ const validateOrder = [
   body('orderItems')
     .isArray({ min: 1 })
     .withMessage('Order must have at least one item'),
+  body('orderItems.*.product')
+    .isMongoId()
+    .withMessage('Each order item must reference a valid product'),
+  body('orderItems.*.quantity')
+    .isInt({ min: 1 })
+    .withMessage('Each order item must have a valid quantity'),
   body('shippingAddress.fullName')
     .trim()
     .notEmpty()
     .withMessage('Full name is required'),
+  body('shippingAddress.address')
+    .trim()
+    .notEmpty()
+    .withMessage('Street address is required'),
+  body('shippingAddress.city')
+    .trim()
+    .notEmpty()
+    .withMessage('City is required'),
+  body('shippingAddress.state')
+    .trim()
+    .notEmpty()
+    .withMessage('Province or state is required'),
+  body('shippingAddress.postalCode')
+    .trim()
+    .isLength({ min: 3, max: 12 })
+    .withMessage('Postal code is required'),
   body('shippingAddress.phone')
     .matches(/^(\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}$/)
     .withMessage('Please provide a valid phone number'),
   body('paymentMethod')
     .isIn(['Paystack', 'PayOnDelivery', 'Crypto'])
     .withMessage('Invalid payment method'),
-  body('totalPrice')
-    .isNumeric()
-    .isFloat({ min: 0 })
-    .withMessage('Total price must be a positive number'),
 ]
 
 // ── 5. VALIDATION ERROR HANDLER ──
@@ -194,12 +211,14 @@ const securityHeaders = (req, res, next) => {
   res.setHeader('X-Frame-Options', 'DENY')
   // Prevent MIME sniffing
   res.setHeader('X-Content-Type-Options', 'nosniff')
-  // XSS protection
-  res.setHeader('X-XSS-Protection', '1; mode=block')
+  // Disable legacy browser XSS filters that can introduce edge-case issues.
+  res.setHeader('X-XSS-Protection', '0')
   // Referrer policy
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin')
   // Permissions policy
   res.setHeader('Permissions-Policy', 'geolocation=(), microphone=(), camera=()')
+  // Isolate browsing contexts for modern browsers.
+  res.setHeader('Cross-Origin-Opener-Policy', 'same-origin')
   next()
 }
 

@@ -55,7 +55,15 @@ router.put('/:id', protect, seller, async (req, res) => {
     if (product.seller.toString() !== req.user._id.toString() && !req.user.isAdmin) {
       return res.status(403).json({ message: 'Not authorized to update this product' })
     }
-    const updatedProduct = await Product.findByIdAndUpdate(req.params.id, req.body, { new: true })
+
+    const allowedFields = ['name', 'price', 'description', 'category', 'image', 'brand', 'countInStock']
+    allowedFields.forEach((field) => {
+      if (Object.prototype.hasOwnProperty.call(req.body, field)) {
+        product[field] = req.body[field]
+      }
+    })
+
+    const updatedProduct = await product.save()
     res.json(updatedProduct)
   } catch (error) {
     res.status(500).json({ message: error.message })
