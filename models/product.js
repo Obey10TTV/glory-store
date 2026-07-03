@@ -40,7 +40,17 @@ const productSchema = new mongoose.Schema({
   seller: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User'
-  }
+  },
+  approvalStatus: {
+    type: String,
+    enum: ['pending', 'approved', 'rejected'],
+    default: 'pending',
+    index: true
+  },
+  rejectionReason: { type: String, default: '' },
+  submittedAt: { type: Date, default: Date.now },
+  approvedAt: Date,
+  reviewedAt: Date
 }, { timestamps: true })
 
 module.exports = mongoose.model('Product', productSchema)

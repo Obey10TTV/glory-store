@@ -35,12 +35,10 @@ router.post('/register', validateRegister, handleValidationErrors, async (req, r
       return res.status(400).json({ message: 'User already exists' })
     }
 
-    const hashedPassword = await bcrypt.hash(password, 12)
-
     const user = await User.create({
       name,
       email,
-      password: hashedPassword,
+      password,
       isSeller: isSeller || false
     })
 
@@ -155,7 +153,7 @@ router.put('/profile', protect, async (req, res) => {
     user.email = req.body.email || user.email
 
     if (req.body.password) {
-      user.password = await bcrypt.hash(req.body.password, 12)
+      user.password = req.body.password
     }
 
     const updatedUser = await user.save()

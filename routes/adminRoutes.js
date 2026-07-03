@@ -74,6 +74,9 @@ router.get('/stats', protect, admin, async (req, res) => {
   try {
     const totalUsers = await User.countDocuments()
     const totalProducts = await Product.countDocuments()
+    const pendingProducts = await Product.countDocuments({ approvalStatus: 'pending' })
+    const approvedProducts = await Product.countDocuments({ approvalStatus: 'approved' })
+    const rejectedProducts = await Product.countDocuments({ approvalStatus: 'rejected' })
     const totalOrders = await Order.countDocuments()
     const totalRevenue = await Order.aggregate([
       { $match: { isPaid: true } },
@@ -83,9 +86,52 @@ router.get('/stats', protect, admin, async (req, res) => {
     res.json({
       totalUsers,
       totalProducts,
+      pendingProducts,
+      approvedProducts,
+      rejectedProducts,
       totalOrders,
       totalRevenue: totalRevenue[0] ? totalRevenue[0].total : 0
     })
+  } catch (error) {
+    res.status(500).json({ message: error.message })
+  }
+})
+
+// GET ALL PRODUCTS - GET /api/admin/products
+router.get('/products', protect, admin, async (req, res) => {
+  try {
+    const products = await Product.find({})
+      .populate('seller', 'name email')
+      .sort({ createdAt: -1 })
+    res.json(products)
+  } catch (error) {
+    res.status(500).json({ message: error.message })
+  }
+})
+
+// REVIEW PRODUCT - PUT /api/admin/products/:id/status
+router.put('/products/:id/status', protect, admin, async (req, res) => {
+  try {
+    const { approvalStatus, rejectionReason = '' } = req.body
+    const allowedStatuses = ['pending', 'approved', 'rejected']
+
+    if (!allowedStatuses.includes(approvalStatus)) {
+      return res.status(400).json({ message: 'Invalid product status' })
+    }
+
+    const product = await Product.findById(req.params.id)
+    if (!product) {
+      return res.status(404).json({ message: 'Product not found' })
+    }
+
+    product.approvalStatus = approvalStatus
+    product.reviewedAt = new Date()
+    product.rejectionReason = approvalStatus === 'rejected' ? rejectionReason : ''
+    product.approvedAt = approvalStatus === 'approved' ? new Date() : undefined
+
+    const updatedProduct = await product.save()
+    const populatedProduct = await updatedProduct.populate('seller', 'name email')
+    res.json(populatedProduct)
   } catch (error) {
     res.status(500).json({ message: error.message })
   }

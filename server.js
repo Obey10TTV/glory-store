@@ -128,6 +128,7 @@ const connectDatabase = async () => {
 
   try {
     await mongoose.connect(mongoUri, {
+      dbName: process.env.MONGO_DB_NAME || 'glory-store',
       serverSelectionTimeoutMS: 15000
     })
     logger.info('MongoDB connected successfully')

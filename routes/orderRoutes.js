@@ -27,7 +27,10 @@ router.post('/', protect, validateOrder, handleValidationErrors, async (req, res
     }
 
     const productIds = [...new Set(orderItems.map((item) => item.product))]
-    const products = await Product.find({ _id: { $in: productIds } })
+    const products = await Product.find({
+      _id: { $in: productIds },
+      approvalStatus: 'approved'
+    })
     const productMap = new Map(products.map((product) => [product._id.toString(), product]))
 
     if (products.length !== productIds.length) {
