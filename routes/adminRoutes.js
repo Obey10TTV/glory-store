@@ -77,6 +77,14 @@ router.get('/stats', protect, admin, async (req, res) => {
     const pendingProducts = await Product.countDocuments({ approvalStatus: 'pending' })
     const approvedProducts = await Product.countDocuments({ approvalStatus: 'approved' })
     const rejectedProducts = await Product.countDocuments({ approvalStatus: 'rejected' })
+    const pendingSellers = await User.countDocuments({
+      isSeller: true,
+      'sellerProfile.verificationStatus': 'pending'
+    })
+    const verifiedSellers = await User.countDocuments({
+      isSeller: true,
+      'sellerProfile.verificationStatus': 'verified'
+    })
     const totalOrders = await Order.countDocuments()
     const totalRevenue = await Order.aggregate([
       { $match: { isPaid: true } },
@@ -89,6 +97,8 @@ router.get('/stats', protect, admin, async (req, res) => {
       pendingProducts,
       approvedProducts,
       rejectedProducts,
+      pendingSellers,
+      verifiedSellers,
       totalOrders,
       totalRevenue: totalRevenue[0] ? totalRevenue[0].total : 0
     })
@@ -101,7 +111,7 @@ router.get('/stats', protect, admin, async (req, res) => {
 router.get('/products', protect, admin, async (req, res) => {
   try {
     const products = await Product.find({})
-      .populate('seller', 'name email')
+      .populate('seller', 'name email sellerProfile')
       .sort({ createdAt: -1 })
     res.json(products)
   } catch (error) {
@@ -119,6 +129,10 @@ router.put('/products/:id/status', protect, admin, async (req, res) => {
       return res.status(400).json({ message: 'Invalid product status' })
     }
 
+    if (String(rejectionReason).length > 500) {
+      return res.status(400).json({ message: 'Rejection note must be 500 characters or less' })
+    }
+
     const product = await Product.findById(req.params.id)
     if (!product) {
       return res.status(404).json({ message: 'Product not found' })
@@ -130,8 +144,45 @@ router.put('/products/:id/status', protect, admin, async (req, res) => {
     product.approvedAt = approvalStatus === 'approved' ? new Date() : undefined
 
     const updatedProduct = await product.save()
-    const populatedProduct = await updatedProduct.populate('seller', 'name email')
+    const populatedProduct = await updatedProduct.populate('seller', 'name email sellerProfile')
     res.json(populatedProduct)
+  } catch (error) {
+    res.status(500).json({ message: error.message })
+  }
+})
+
+// REVIEW SELLER - PUT /api/admin/users/:id/seller-status
+router.put('/users/:id/seller-status', protect, admin, async (req, res) => {
+  try {
+    const { verificationStatus, verificationNote = '' } = req.body
+    const allowedStatuses = ['incomplete', 'pending', 'verified', 'rejected']
+
+    if (!allowedStatuses.includes(verificationStatus)) {
+      return res.status(400).json({ message: 'Invalid seller verification status' })
+    }
+
+    if (String(verificationNote).length > 500) {
+      return res.status(400).json({ message: 'Verification note must be 500 characters or less' })
+    }
+
+    const user = await User.findById(req.params.id).select('-password')
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' })
+    }
+
+    user.isSeller = true
+    user.sellerProfile.verificationStatus = verificationStatus
+    user.sellerProfile.verificationNote = verificationStatus === 'rejected' ? verificationNote : ''
+    user.sellerProfile.reviewedAt = new Date()
+
+    if (verificationStatus === 'pending' && !user.sellerProfile.submittedAt) {
+      user.sellerProfile.submittedAt = new Date()
+    }
+
+    const updatedUser = await user.save()
+    const safeUser = updatedUser.toObject()
+    delete safeUser.password
+    res.json(safeUser)
   } catch (error) {
     res.status(500).json({ message: error.message })
   }

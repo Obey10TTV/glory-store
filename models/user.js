@@ -32,6 +32,73 @@ const userSchema = new mongoose.Schema({
     city: String,
     state: String,
     phone: String
+  },
+  sellerProfile: {
+    storeName: {
+      type: String,
+      trim: true,
+      maxlength: 80,
+      default: ''
+    },
+    bio: {
+      type: String,
+      trim: true,
+      maxlength: 600,
+      default: ''
+    },
+    businessEmail: {
+      type: String,
+      trim: true,
+      lowercase: true,
+      default: ''
+    },
+    phone: {
+      type: String,
+      trim: true,
+      default: ''
+    },
+    city: {
+      type: String,
+      trim: true,
+      maxlength: 80,
+      default: ''
+    },
+    province: {
+      type: String,
+      trim: true,
+      maxlength: 80,
+      default: ''
+    },
+    country: {
+      type: String,
+      trim: true,
+      default: 'Canada'
+    },
+    website: {
+      type: String,
+      trim: true,
+      default: ''
+    },
+    instagram: {
+      type: String,
+      trim: true,
+      maxlength: 80,
+      default: ''
+    },
+    verificationStatus: {
+      type: String,
+      enum: ['incomplete', 'pending', 'verified', 'rejected'],
+      default: 'incomplete',
+      index: true
+    },
+    verificationNote: {
+      type: String,
+      trim: true,
+      maxlength: 500,
+      default: ''
+    },
+    submittedAt: Date,
+    reviewedAt: Date
   }
 }, {
   timestamps: true

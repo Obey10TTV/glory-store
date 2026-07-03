@@ -39,27 +39,33 @@ const paymentLimiter = rateLimit({
 })
 
 // ── 2. XSS PROTECTION ──
+const sanitizeValue = (value) => {
+  if (typeof value === 'string') {
+    return xss(value)
+  }
+
+  if (Array.isArray(value)) {
+    return value.map(sanitizeValue)
+  }
+
+  if (value && typeof value === 'object') {
+    Object.keys(value).forEach((key) => {
+      value[key] = sanitizeValue(value[key])
+    })
+  }
+
+  return value
+}
+
 const sanitizeInput = (req, res, next) => {
   if (req.body) {
-    Object.keys(req.body).forEach(key => {
-      if (typeof req.body[key] === 'string') {
-        req.body[key] = xss(req.body[key])
-      }
-    })
+    req.body = sanitizeValue(req.body)
   }
   if (req.query) {
-    Object.keys(req.query).forEach(key => {
-      if (typeof req.query[key] === 'string') {
-        req.query[key] = xss(req.query[key])
-      }
-    })
+    req.query = sanitizeValue(req.query)
   }
   if (req.params) {
-    Object.keys(req.params).forEach(key => {
-      if (typeof req.params[key] === 'string') {
-        req.params[key] = xss(req.params[key])
-      }
-    })
+    req.params = sanitizeValue(req.params)
   }
   next()
 }
@@ -134,8 +140,15 @@ const validateProduct = [
     .withMessage('Product name must be between 2 and 100 characters'),
   body('price')
     .isNumeric()
-    .isFloat({ min: 0 })
+    .isFloat({ min: 0.01 })
     .withMessage('Price must be a positive number'),
+  body('brand')
+    .trim()
+    .isLength({ min: 2, max: 80 })
+    .withMessage('Brand must be between 2 and 80 characters'),
+  body('image')
+    .isURL({ protocols: ['http', 'https'], require_protocol: true })
+    .withMessage('Product image must be a valid URL'),
   body('description')
     .trim()
     .isLength({ min: 10, max: 2000 })
@@ -190,6 +203,56 @@ const validateOrder = [
     .withMessage('Invalid payment method'),
 ]
 
+const validateSellerProfile = [
+  body('storeName')
+    .optional({ checkFalsy: true })
+    .trim()
+    .isLength({ min: 2, max: 80 })
+    .withMessage('Store name must be between 2 and 80 characters'),
+  body('bio')
+    .optional({ checkFalsy: true })
+    .trim()
+    .isLength({ max: 600 })
+    .withMessage('Store bio must be 600 characters or less'),
+  body('businessEmail')
+    .optional({ checkFalsy: true })
+    .isEmail()
+    .normalizeEmail()
+    .withMessage('Please provide a valid business email'),
+  body('phone')
+    .optional({ checkFalsy: true })
+    .matches(/^(\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}$/)
+    .withMessage('Please provide a valid phone number'),
+  body('city')
+    .optional({ checkFalsy: true })
+    .trim()
+    .isLength({ max: 80 })
+    .withMessage('City must be 80 characters or less'),
+  body('province')
+    .optional({ checkFalsy: true })
+    .trim()
+    .isLength({ max: 80 })
+    .withMessage('Province must be 80 characters or less'),
+  body('country')
+    .optional({ checkFalsy: true })
+    .trim()
+    .isLength({ max: 80 })
+    .withMessage('Country must be 80 characters or less'),
+  body('website')
+    .optional({ checkFalsy: true })
+    .isURL({ protocols: ['http', 'https'], require_protocol: true })
+    .withMessage('Website must be a valid URL starting with http:// or https://'),
+  body('instagram')
+    .optional({ checkFalsy: true })
+    .trim()
+    .isLength({ max: 80 })
+    .withMessage('Instagram handle must be 80 characters or less'),
+  body('submitForReview')
+    .optional()
+    .isBoolean()
+    .withMessage('submitForReview must be true or false')
+]
+
 // ── 5. VALIDATION ERROR HANDLER ──
 const handleValidationErrors = (req, res, next) => {
   const errors = validationResult(req)
@@ -237,6 +300,7 @@ module.exports = {
   validateRegister,
   validateLogin,
   validateProduct,
+  validateSellerProfile,
   validateOrder,
   handleValidationErrors,
   securityHeaders,

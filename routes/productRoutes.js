@@ -16,7 +16,7 @@ const canManageProduct = (product, user) => {
 router.get('/', async (req, res) => {
   try {
     const products = await Product.find({ approvalStatus: 'approved' })
-      .populate('seller', 'name email')
+      .populate('seller', 'name sellerProfile.storeName sellerProfile.verificationStatus')
       .sort({ createdAt: -1 })
     res.json(products)
   } catch (error) {
@@ -29,7 +29,7 @@ router.get('/mine', protect, seller, async (req, res) => {
   try {
     const query = req.user.isAdmin ? {} : { seller: req.user._id }
     const products = await Product.find(query)
-      .populate('seller', 'name email')
+      .populate('seller', 'name email sellerProfile')
       .sort({ createdAt: -1 })
     res.json(products)
   } catch (error) {
@@ -40,7 +40,7 @@ router.get('/mine', protect, seller, async (req, res) => {
 // GET SINGLE PRODUCT - Public
 router.get('/:id', async (req, res) => {
   try {
-    const product = await Product.findById(req.params.id).populate('seller', 'name email')
+    const product = await Product.findById(req.params.id).populate('seller', 'name sellerProfile.storeName sellerProfile.verificationStatus')
     if (!product || product.approvalStatus !== 'approved') {
       return res.status(404).json({ message: 'Product not found' })
     }
@@ -71,7 +71,7 @@ router.post('/', protect, seller, validateProduct, handleValidationErrors, async
 })
 
 // UPDATE PRODUCT - Seller only
-router.put('/:id', protect, seller, async (req, res) => {
+router.put('/:id', protect, seller, validateProduct, handleValidationErrors, async (req, res) => {
   try {
     const product = await Product.findById(req.params.id)
     if (!product) {
