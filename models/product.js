@@ -48,7 +48,7 @@ const productSchema = new mongoose.Schema({
     index: true
   },
   rejectionReason: { type: String, default: '' },
-  submittedAt: { type: Date, default: Date.now },
+  submittedAt: Date,
   approvedAt: Date,
   reviewedAt: Date
 }, { timestamps: true })

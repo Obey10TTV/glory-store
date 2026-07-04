@@ -1,6 +1,21 @@
 const mongoose = require('mongoose')
 const bcrypt = require('bcryptjs')
 
+const otpChallengeSchema = new mongoose.Schema({
+  codeHash: {
+    type: String,
+    default: ''
+  },
+  expiresAt: Date,
+  lastSentAt: Date,
+  attempts: {
+    type: Number,
+    default: 0
+  }
+}, {
+  _id: false
+})
+
 const userSchema = new mongoose.Schema({
   name: {
     type: String,
@@ -9,11 +24,39 @@ const userSchema = new mongoose.Schema({
   email: {
     type: String,
     required: true,
-    unique: true
+    unique: true,
+    trim: true,
+    lowercase: true
   },
   password: {
     type: String,
     required: true
+  },
+  isEmailVerified: {
+    type: Boolean,
+    default: true
+  },
+  emailVerification: {
+    type: otpChallengeSchema,
+    default: () => ({})
+  },
+  twoFactor: {
+    enabled: {
+      type: Boolean,
+      default: false
+    },
+    pending: {
+      type: otpChallengeSchema,
+      default: () => ({})
+    },
+    login: {
+      type: otpChallengeSchema,
+      default: () => ({})
+    },
+    disable: {
+      type: otpChallengeSchema,
+      default: () => ({})
+    }
   },
   isSeller: {
     type: Boolean,
@@ -102,6 +145,22 @@ const userSchema = new mongoose.Schema({
   }
 }, {
   timestamps: true
+})
+
+const removeSensitiveFields = (ret) => {
+  delete ret.password
+  delete ret.emailVerification
+  ret.twoFactorEnabled = Boolean(ret.twoFactor?.enabled)
+  delete ret.twoFactor
+  return ret
+}
+
+userSchema.set('toJSON', {
+  transform: (doc, ret) => removeSensitiveFields(ret)
+})
+
+userSchema.set('toObject', {
+  transform: (doc, ret) => removeSensitiveFields(ret)
 })
 
 userSchema.pre('save', async function() {

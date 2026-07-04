@@ -24,6 +24,14 @@ const authLimiter = rateLimit({
   legacyHeaders: false
 })
 
+const otpLimiter = rateLimit({
+  windowMs: 10 * 60 * 1000,
+  max: 8,
+  message: { message: 'Too many verification attempts, please try again after 10 minutes.' },
+  standardHeaders: true,
+  legacyHeaders: false
+})
+
 // Upload limiter
 const uploadLimiter = rateLimit({
   windowMs: 60 * 60 * 1000, // 1 hour
@@ -117,8 +125,8 @@ const validateRegister = [
     .normalizeEmail()
     .withMessage('Please provide a valid email'),
   body('password')
-    .isLength({ min: 6 })
-    .withMessage('Password must be at least 6 characters')
+    .isLength({ min: 8 })
+    .withMessage('Password must be at least 8 characters')
     .matches(/\d/)
     .withMessage('Password must contain at least one number'),
 ]
@@ -131,6 +139,31 @@ const validateLogin = [
   body('password')
     .notEmpty()
     .withMessage('Password is required'),
+]
+
+const validateEmailOtp = [
+  body('email')
+    .isEmail()
+    .normalizeEmail()
+    .withMessage('Please provide a valid email'),
+  body('otp')
+    .trim()
+    .matches(/^\d{6}$/)
+    .withMessage('Verification code must be 6 digits'),
+]
+
+const validateEmailOnly = [
+  body('email')
+    .isEmail()
+    .normalizeEmail()
+    .withMessage('Please provide a valid email'),
+]
+
+const validateOtpOnly = [
+  body('otp')
+    .trim()
+    .matches(/^\d{6}$/)
+    .withMessage('Verification code must be 6 digits'),
 ]
 
 const validateProduct = [
@@ -293,12 +326,16 @@ const hppProtection = hpp({
 module.exports = {
   generalLimiter,
   authLimiter,
+  otpLimiter,
   uploadLimiter,
   paymentLimiter,
   sanitizeInput,
   ipProtection,
   validateRegister,
   validateLogin,
+  validateEmailOtp,
+  validateEmailOnly,
+  validateOtpOnly,
   validateProduct,
   validateSellerProfile,
   validateOrder,

@@ -9,7 +9,7 @@ const { protect, admin } = require('../middleware/auth')
 // GET ALL USERS - GET /api/admin/users
 router.get('/users', protect, admin, async (req, res) => {
   try {
-    const users = await User.find({}).select('-password')
+    const users = await User.find({}).select('-password -emailVerification -twoFactor')
     res.json(users)
   } catch (error) {
     res.status(500).json({ message: error.message })
@@ -165,7 +165,7 @@ router.put('/users/:id/seller-status', protect, admin, async (req, res) => {
       return res.status(400).json({ message: 'Verification note must be 500 characters or less' })
     }
 
-    const user = await User.findById(req.params.id).select('-password')
+    const user = await User.findById(req.params.id).select('-password -emailVerification -twoFactor')
     if (!user) {
       return res.status(404).json({ message: 'User not found' })
     }
@@ -180,9 +180,7 @@ router.put('/users/:id/seller-status', protect, admin, async (req, res) => {
     }
 
     const updatedUser = await user.save()
-    const safeUser = updatedUser.toObject()
-    delete safeUser.password
-    res.json(safeUser)
+    res.json(updatedUser.toObject())
   } catch (error) {
     res.status(500).json({ message: error.message })
   }

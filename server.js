@@ -19,6 +19,7 @@ const adminRoutes = require('./routes/adminRoutes')
 const {
   generalLimiter,
   authLimiter,
+  otpLimiter,
   uploadLimiter,
   paymentLimiter,
   sanitizeInput,
@@ -35,6 +36,8 @@ app.disable('x-powered-by')
 const fallbackAllowedOrigins = [
   'http://localhost:3000',
   'http://localhost:3001',
+  'http://127.0.0.1:3000',
+  'http://127.0.0.1:3001',
   'https://glory-frontend-gray.vercel.app'
 ]
 
@@ -142,6 +145,9 @@ connectDatabase()
 // ── ROUTES WITH SPECIFIC LIMITERS ──
 app.use('/api/users/login', authLimiter)
 app.use('/api/users/register', authLimiter)
+app.use('/api/users/verify-email', otpLimiter)
+app.use('/api/users/resend-verification', otpLimiter)
+app.use('/api/users/2fa', otpLimiter)
 app.use('/api/users', userRoutes)
 app.use('/api/products', productRoutes)
 app.use('/api/orders', orderRoutes)
