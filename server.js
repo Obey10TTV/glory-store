@@ -38,7 +38,12 @@ const fallbackAllowedOrigins = [
   'http://localhost:3001',
   'http://127.0.0.1:3000',
   'http://127.0.0.1:3001',
-  'https://glory-frontend-gray.vercel.app'
+  'https://glory-frontend-gray.vercel.app',
+  'https://glory-ca.vercel.app',
+  'https://glory-ca-obioma-ajoku-s-projects.vercel.app',
+  'https://glory-ca-obey10ttv-obioma-ajoku-s-projects.vercel.app',
+  'https://gloryca.com',
+  'https://www.gloryca.com'
 ]
 
 const configuredOrigins = [
@@ -60,7 +65,9 @@ const corsOptions = {
       return callback(null, true)
     }
 
-    return callback(new Error('Not allowed by CORS'))
+    const corsError = new Error('Not allowed by CORS')
+    corsError.status = 403
+    return callback(corsError)
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
