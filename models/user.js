@@ -16,6 +16,46 @@ const otpChallengeSchema = new mongoose.Schema({
   _id: false
 })
 
+const authSessionSchema = new mongoose.Schema({
+  sessionId: { type: String, required: true },
+  tokenHash: { type: String, required: true },
+  deviceLabel: { type: String, maxlength: 120, default: 'Browser session' },
+  userAgent: { type: String, maxlength: 240, default: '' },
+  ipHash: { type: String, default: '' },
+  createdAt: { type: Date, default: Date.now },
+  lastUsedAt: { type: Date, default: Date.now },
+  expiresAt: { type: Date, required: true },
+}, { _id: false })
+
+const sellerDocumentSchema = new mongoose.Schema({
+  type: {
+    type: String,
+    enum: ['identity', 'business', 'address'],
+    required: true
+  },
+  publicId: { type: String, required: true },
+  resourceType: { type: String, enum: ['image', 'raw'], default: 'image' },
+  format: { type: String, maxlength: 20, default: '' },
+  originalName: { type: String, maxlength: 180, default: '' },
+  mimeType: { type: String, maxlength: 100, default: '' },
+  status: {
+    type: String,
+    enum: ['pending', 'approved', 'rejected'],
+    default: 'pending'
+  },
+  note: { type: String, maxlength: 500, default: '' },
+  uploadedAt: { type: Date, default: Date.now },
+  reviewedAt: Date,
+  reviewedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }
+})
+
+const sellerAuditSchema = new mongoose.Schema({
+  action: { type: String, required: true, maxlength: 80 },
+  note: { type: String, maxlength: 500, default: '' },
+  actor: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+  createdAt: { type: Date, default: Date.now }
+}, { _id: false })
+
 const userSchema = new mongoose.Schema({
   name: {
     type: String,
@@ -56,7 +96,15 @@ const userSchema = new mongoose.Schema({
     disable: {
       type: otpChallengeSchema,
       default: () => ({})
+    },
+    recoveryCodeHashes: {
+      type: [String],
+      default: []
     }
+  },
+  authSessions: {
+    type: [authSessionSchema],
+    default: []
   },
   isSeller: {
     type: Boolean,
@@ -140,6 +188,14 @@ const userSchema = new mongoose.Schema({
       maxlength: 500,
       default: ''
     },
+    documents: {
+      type: [sellerDocumentSchema],
+      default: []
+    },
+    auditTrail: {
+      type: [sellerAuditSchema],
+      default: []
+    },
     submittedAt: Date,
     reviewedAt: Date
   }
@@ -150,8 +206,19 @@ const userSchema = new mongoose.Schema({
 const removeSensitiveFields = (ret) => {
   delete ret.password
   delete ret.emailVerification
+  delete ret.authSessions
   ret.twoFactorEnabled = Boolean(ret.twoFactor?.enabled)
   delete ret.twoFactor
+  if (ret.sellerProfile?.documents) {
+    ret.sellerProfile.documents = ret.sellerProfile.documents.map((document) => {
+      const safeDocument = { ...document }
+      delete safeDocument.publicId
+      delete safeDocument.resourceType
+      delete safeDocument.format
+      delete safeDocument.reviewedBy
+      return safeDocument
+    })
+  }
   return ret
 }
 

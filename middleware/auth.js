@@ -1,19 +1,36 @@
 const jwt = require('jsonwebtoken')
 const User = require('../models/user')
+const { ACCESS_COOKIE } = require('../utils/authSession')
 
 // Protect any route - must be logged in
 const protect = async (req, res, next) => {
-  let token
-  if (req.headers.authorization && req.headers.authorization.startsWith('Bearer')) {
+  const cookieToken = req.cookies?.[ACCESS_COOKIE]
+  const token = cookieToken
+
+  if (token) {
     try {
-      token = req.headers.authorization.split(' ')[1]
       const decoded = jwt.verify(token, process.env.JWT_SECRET)
+      if (decoded.type && decoded.type !== 'access') {
+        return res.status(401).json({ message: 'Not authorized, invalid token type' })
+      }
       req.user = await User.findById(decoded.id).select(
         '-password -emailVerification -twoFactor.pending -twoFactor.login -twoFactor.disable'
       )
       if (!req.user) {
         return res.status(401).json({ message: 'User not found' })
       }
+
+      if (!decoded.sessionId) {
+        return res.status(401).json({ message: 'Session has expired' })
+      }
+      const activeSession = req.user.authSessions?.find(
+        (session) => session.sessionId === decoded.sessionId
+          && new Date(session.expiresAt).getTime() > Date.now()
+      )
+      if (!activeSession) {
+        return res.status(401).json({ message: 'Session has expired' })
+      }
+      req.authSessionId = decoded.sessionId
       next()
     } catch (error) {
       return res.status(401).json({ message: 'Not authorized, token failed' })

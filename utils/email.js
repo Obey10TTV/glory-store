@@ -35,7 +35,8 @@ const purposeLabels = {
   'verify-email': 'Verify your Glory account',
   'login-2fa': 'Your Glory sign-in code',
   'enable-2fa': 'Confirm two-factor authentication',
-  'disable-2fa': 'Confirm two-factor authentication changes'
+  'disable-2fa': 'Confirm two-factor authentication changes',
+  'recovery-2fa': 'Confirm new Glory recovery codes'
 }
 
 const sendOtpEmail = async ({ to, code, purpose = 'verify-email' }) => {
@@ -74,4 +75,28 @@ const sendOtpEmail = async ({ to, code, purpose = 'verify-email' }) => {
   })
 }
 
-module.exports = { sendOtpEmail }
+const sendOrderStatusEmail = async ({ order, status, trackingNumber = '' }) => {
+  const to = order.buyer?.email
+  if (!to) return
+  const mailer = getTransporter()
+  if (!mailer) {
+    logger.info({ type: 'ORDER_EMAIL_SKIPPED', orderId: order._id, status })
+    return
+  }
+
+  const orderNumber = order._id.toString().slice(-8).toUpperCase()
+  const trackingText = trackingNumber ? ` Tracking number: ${trackingNumber}.` : ''
+  try {
+    await mailer.sendMail({
+      from: process.env.SMTP_FROM || process.env.SMTP_USER,
+      to,
+      subject: `Glory order #${orderNumber}: ${status}`,
+      text: `Your Glory order is now ${status}.${trackingText}`,
+      html: `<div style="font-family:Arial,sans-serif;color:#111;line-height:1.6"><h2>Order #${orderNumber}</h2><p>Your order is now <strong>${status}</strong>.</p>${trackingNumber ? `<p>Tracking number: <strong>${trackingNumber}</strong></p>` : ''}</div>`
+    })
+  } catch (error) {
+    logger.error({ type: 'ORDER_EMAIL_FAILED', orderId: order._id, message: error.message })
+  }
+}
+
+module.exports = { sendOtpEmail, sendOrderStatusEmail }

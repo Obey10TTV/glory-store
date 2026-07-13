@@ -15,10 +15,53 @@ const canManageProduct = (product, user) => {
 // GET ALL PRODUCTS - Public
 router.get('/', async (req, res) => {
   try {
-    const products = await Product.find({ approvalStatus: 'approved' })
+    const hasCatalogueQuery = Object.keys(req.query).length > 0
+    const page = Math.max(1, Number.parseInt(req.query.page, 10) || 1)
+    const limit = Math.min(48, Math.max(1, Number.parseInt(req.query.limit, 10) || 24))
+    const query = { approvalStatus: 'approved' }
+    const q = String(req.query.q || '').trim().slice(0, 100)
+    if (q) {
+      const escaped = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+      query.$or = [
+        { name: new RegExp(escaped, 'i') },
+        { brand: new RegExp(escaped, 'i') },
+        { description: new RegExp(escaped, 'i') }
+      ]
+    }
+    if (req.query.category) query.category = String(req.query.category).slice(0, 80)
+    if (req.query.brand) query.brand = String(req.query.brand).slice(0, 80)
+    if (req.query.minPrice || req.query.maxPrice) {
+      query.price = {}
+      if (req.query.minPrice) query.price.$gte = Math.max(0, Number(req.query.minPrice) || 0)
+      if (req.query.maxPrice) query.price.$lte = Math.max(0, Number(req.query.maxPrice) || 0)
+    }
+    const sortOptions = {
+      newest: { createdAt: -1 },
+      price_asc: { price: 1, createdAt: -1 },
+      price_desc: { price: -1, createdAt: -1 },
+      rating: { rating: -1, numReviews: -1 }
+    }
+    const sort = sortOptions[req.query.sort] || sortOptions.newest
+
+    const productQuery = Product.find(query)
       .populate('seller', 'name sellerProfile.storeName sellerProfile.verificationStatus')
-      .sort({ createdAt: -1 })
-    res.json(products)
+      .sort(sort)
+
+    if (!hasCatalogueQuery) {
+      return res.json(await productQuery)
+    }
+
+    const [products, total, categories, brands] = await Promise.all([
+      productQuery.skip((page - 1) * limit).limit(limit),
+      Product.countDocuments(query),
+      Product.distinct('category', { approvalStatus: 'approved' }),
+      Product.distinct('brand', { approvalStatus: 'approved' })
+    ])
+    res.json({
+      items: products,
+      pagination: { page, limit, total, pages: Math.max(1, Math.ceil(total / limit)) },
+      facets: { categories: categories.sort(), brands: brands.sort() }
+    })
   } catch (error) {
     res.status(500).json({ message: error.message })
   }
@@ -55,12 +98,12 @@ router.post('/', protect, verifiedSeller, validateProduct, handleValidationError
   try {
     const {
       name, price, compareAtPrice, sku, size, description, ingredients,
-      howToUse, category, image, brand, countInStock
+      howToUse, category, image, images, variants, brand, countInStock
     } = req.body
     const product = await Product.create({
       name, price, compareAtPrice, sku, size, description, ingredients,
       howToUse, category,
-      image, brand, countInStock,
+      image, images, variants, brand, countInStock,
       seller: req.user._id,
       approvalStatus: req.user.isAdmin ? 'approved' : 'pending',
       submittedAt: new Date(),
@@ -87,7 +130,7 @@ router.put('/:id', protect, verifiedSeller, validateProduct, handleValidationErr
 
     const allowedFields = [
       'name', 'price', 'compareAtPrice', 'sku', 'size', 'description',
-      'ingredients', 'howToUse', 'category', 'image', 'brand', 'countInStock'
+      'ingredients', 'howToUse', 'category', 'image', 'images', 'variants', 'brand', 'countInStock'
     ]
     allowedFields.forEach((field) => {
       if (Object.prototype.hasOwnProperty.call(req.body, field)) {

@@ -34,7 +34,7 @@ const httpLogger = morgan('combined', {
   stream: {
     write: (message) => logger.info(message.trim())
   },
-  skip: (req) => req.url === '/health' // skip health checks
+  skip: (req) => ['/api/health', '/api/ready'].includes(req.url)
 })
 
 // ── SECURITY EVENT LOGGER ──

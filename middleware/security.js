@@ -198,6 +198,17 @@ const validateOtpOnly = [
     .withMessage('Verification code must be 6 digits'),
 ]
 
+const validateSecondFactor = [
+  body('email')
+    .isEmail()
+    .normalizeEmail()
+    .withMessage('Please provide a valid email'),
+  body('otp')
+    .trim()
+    .custom((value) => /^\d{6}$/.test(value) || /^[A-F0-9]{6}-[A-F0-9]{6}$/i.test(value))
+    .withMessage('Enter a 6-digit code or a valid recovery code'),
+]
+
 const validateProduct = [
   body('name')
     .trim()
@@ -230,6 +241,40 @@ const validateProduct = [
   body('image')
     .isURL({ protocols: ['http', 'https'], require_protocol: true })
     .withMessage('Product image must be a valid URL'),
+  body('images')
+    .optional()
+    .isArray({ max: 6 })
+    .withMessage('A product can have up to 6 gallery images'),
+  body('images.*')
+    .optional()
+    .isURL({ protocols: ['http', 'https'], require_protocol: true })
+    .withMessage('Every gallery image must be a valid URL'),
+  body('variants')
+    .optional()
+    .isArray({ max: 30 })
+    .withMessage('A product can have up to 30 variants'),
+  body('variants.*.name')
+    .optional()
+    .trim()
+    .isLength({ min: 1, max: 100 })
+    .withMessage('Variant names must be 100 characters or less'),
+  body('variants.*.sku')
+    .optional({ checkFalsy: true })
+    .trim()
+    .isLength({ max: 64 })
+    .withMessage('Variant SKUs must be 64 characters or less'),
+  body('variants.*.price')
+    .optional({ checkFalsy: true })
+    .isFloat({ min: 0.01 })
+    .withMessage('Variant prices must be positive'),
+  body('variants.*.countInStock')
+    .optional()
+    .isInt({ min: 0 })
+    .withMessage('Variant stock must be a non-negative integer'),
+  body('variants.*.image')
+    .optional({ checkFalsy: true })
+    .isURL({ protocols: ['http', 'https'], require_protocol: true })
+    .withMessage('Variant images must be valid URLs'),
   body('description')
     .trim()
     .isLength({ min: 10, max: 2000 })
@@ -263,6 +308,10 @@ const validateOrder = [
   body('orderItems.*.product')
     .isMongoId()
     .withMessage('Each order item must reference a valid product'),
+  body('orderItems.*.variantId')
+    .optional({ checkFalsy: true })
+    .isMongoId()
+    .withMessage('Each selected variant must be valid'),
   body('orderItems.*.quantity')
     .isInt({ min: 1 })
     .withMessage('Each order item must have a valid quantity'),
@@ -290,7 +339,7 @@ const validateOrder = [
     .matches(/^(\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}$/)
     .withMessage('Please provide a valid phone number'),
   body('paymentMethod')
-    .isIn(['Paystack', 'PayOnDelivery', 'Crypto'])
+    .isIn(['Paystack', 'PayOnDelivery'])
     .withMessage('Invalid payment method'),
 ]
 
@@ -395,6 +444,7 @@ module.exports = {
   validateEmailOtp,
   validateEmailOnly,
   validateOtpOnly,
+  validateSecondFactor,
   validateProduct,
   validateSellerProfile,
   validateOrder,

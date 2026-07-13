@@ -1,7 +1,6 @@
 const express = require('express')
 const router = express.Router()
 const bcrypt = require('bcryptjs')
-const jwt = require('jsonwebtoken')
 const User = require('../models/user')
 const { protect } = require('../middleware/auth')
 const {
@@ -10,6 +9,7 @@ const {
   validateEmailOtp,
   validateEmailOnly,
   validateOtpOnly,
+  validateSecondFactor,
   validateSellerProfile,
   validateUpdateProfile,
   handleValidationErrors
@@ -18,9 +18,21 @@ const {
   generateOtp,
   createOtpChallenge,
   isInCooldown,
-  verifyOtpChallenge
+  verifyOtpChallenge,
+  generateRecoveryCodes,
+  hashRecoveryCode,
+  consumeRecoveryCode
 } = require('../utils/otp')
 const { sendOtpEmail } = require('../utils/email')
+const {
+  REFRESH_COOKIE,
+  clearAuthCookies,
+  createRefreshToken,
+  createSession,
+  hashToken,
+  issueCsrfToken,
+  setAuthCookies,
+} = require('../utils/authSession')
 
 // Admin-only middleware for this file
 const adminOnly = (req, res, next) => {
@@ -31,15 +43,6 @@ const adminOnly = (req, res, next) => {
   return res.status(403).json({ message: 'Not authorized as admin' })
 }
 
-// Generate JWT token
-const generateToken = (userId) => {
-  return jwt.sign(
-    { id: userId },
-    process.env.JWT_SECRET,
-    { expiresIn: process.env.JWT_EXPIRES_IN || '2h' }
-  )
-}
-
 const getAuthPayload = (user) => ({
   _id: user._id,
   name: user.name,
@@ -48,9 +51,20 @@ const getAuthPayload = (user) => ({
   isAdmin: user.isAdmin,
   isEmailVerified: user.isEmailVerified !== false,
   twoFactorEnabled: Boolean(user.twoFactor?.enabled),
-  sellerProfile: user.sellerProfile,
-  token: generateToken(user._id)
+  sellerProfile: user.sellerProfile
 })
+
+const establishSession = async (user, req, res) => {
+  const now = Date.now()
+  user.authSessions = (user.authSessions || [])
+    .filter((session) => new Date(session.expiresAt).getTime() > now)
+    .slice(-4)
+
+  const { refreshToken, session } = createSession(req)
+  user.authSessions.push(session)
+  await user.save()
+  setAuthCookies(res, { userId: user._id, sessionId: session.sessionId, refreshToken })
+}
 
 const waitError = () => {
   const error = new Error('Please wait 60 seconds before requesting another code.')
@@ -142,6 +156,66 @@ const isSellerProfileComplete = (sellerProfile = {}) => (
   requiredSellerProfileFields.every((field) => String(sellerProfile[field] || '').trim().length > 0)
 )
 
+// CSRF BOOTSTRAP
+router.get('/csrf', (req, res) => {
+  res.json({ csrfToken: issueCsrfToken(res) })
+})
+
+// ROTATE REFRESH SESSION
+router.post('/refresh', async (req, res) => {
+  try {
+    const refreshToken = req.cookies?.[REFRESH_COOKIE]
+    if (!refreshToken) {
+      clearAuthCookies(res)
+      return res.status(401).json({ message: 'Refresh session is missing' })
+    }
+
+    const tokenHash = hashToken(refreshToken)
+    const user = await User.findOne({
+      authSessions: {
+        $elemMatch: { tokenHash, expiresAt: { $gt: new Date() } }
+      }
+    })
+
+    if (!user) {
+      clearAuthCookies(res)
+      return res.status(401).json({ message: 'Refresh session has expired' })
+    }
+
+    const session = user.authSessions.find((item) => item.tokenHash === tokenHash)
+    const rotatedToken = createRefreshToken()
+    session.tokenHash = hashToken(rotatedToken)
+    session.lastUsedAt = new Date()
+    await user.save()
+    setAuthCookies(res, {
+      userId: user._id,
+      sessionId: session.sessionId,
+      refreshToken: rotatedToken
+    })
+
+    res.json(getAuthPayload(user))
+  } catch (error) {
+    handleRouteError(res, error)
+  }
+})
+
+router.post('/logout', async (req, res) => {
+  try {
+    const refreshToken = req.cookies?.[REFRESH_COOKIE]
+    if (refreshToken) {
+      await User.updateOne(
+        { 'authSessions.tokenHash': hashToken(refreshToken) },
+        { $pull: { authSessions: { tokenHash: hashToken(refreshToken) } } }
+      )
+    }
+    clearAuthCookies(res)
+    res.json({ message: 'Signed out securely' })
+  } catch (error) {
+    clearAuthCookies(res)
+    handleRouteError(res, error)
+  }
+})
+
 // REGISTER
 router.post('/register', validateRegister, handleValidationErrors, async (req, res) => {
   try {
@@ -218,6 +292,7 @@ router.post('/login', validateLogin, handleValidationErrors, async (req, res) =>
       })
     }
 
+    await establishSession(user, req, res)
     res.json(getAuthPayload(user))
   } catch (error) {
     handleRouteError(res, error)
@@ -248,6 +323,7 @@ router.post('/verify-email', validateEmailOtp, handleValidationErrors, async (re
     user.emailVerification = {}
     await user.save()
 
+    await establishSession(user, req, res)
     res.json(getAuthPayload(user))
   } catch (error) {
     handleRouteError(res, error)
@@ -275,7 +351,7 @@ router.post('/resend-verification', validateEmailOnly, handleValidationErrors, a
 })
 
 // VERIFY LOGIN 2FA OTP
-router.post('/2fa/verify-login', validateEmailOtp, handleValidationErrors, async (req, res) => {
+router.post('/2fa/verify-login', validateSecondFactor, handleValidationErrors, async (req, res) => {
   try {
     const { email, otp } = req.body
     const user = await User.findOne({ email })
@@ -284,15 +360,23 @@ router.post('/2fa/verify-login', validateEmailOtp, handleValidationErrors, async
       return res.status(400).json({ message: 'Verification code is invalid.' })
     }
 
-    const result = verifyOtpChallenge(user.twoFactor.login, otp)
+    const isOtp = /^\d{6}$/.test(otp)
+    const recoveryResult = isOtp
+      ? null
+      : consumeRecoveryCode(user.twoFactor.recoveryCodeHashes || [], otp)
+    const result = isOtp
+      ? verifyOtpChallenge(user.twoFactor.login, otp)
+      : { valid: recoveryResult.valid, message: 'Recovery code is invalid or has already been used.' }
     if (!result.valid) {
       await user.save()
       return res.status(400).json({ message: result.message })
     }
 
+    if (recoveryResult?.valid) {
+      user.twoFactor.recoveryCodeHashes = recoveryResult.hashes
+    }
     user.twoFactor.login = {}
-    await user.save()
-
+    await establishSession(user, req, res)
     res.json(getAuthPayload(user))
   } catch (error) {
     handleRouteError(res, error)
@@ -339,9 +423,11 @@ router.post('/2fa/enable/confirm', protect, validateOtpOnly, handleValidationErr
     user.twoFactor.enabled = true
     user.twoFactor.pending = {}
     user.twoFactor.login = {}
+    const recoveryCodes = generateRecoveryCodes()
+    user.twoFactor.recoveryCodeHashes = recoveryCodes.map(hashRecoveryCode)
     await user.save()
 
-    res.json(getAuthPayload(user))
+    res.json({ ...getAuthPayload(user), recoveryCodes })
   } catch (error) {
     handleRouteError(res, error)
   }
@@ -387,9 +473,50 @@ router.post('/2fa/disable/confirm', protect, validateOtpOnly, handleValidationEr
     user.twoFactor.enabled = false
     user.twoFactor.disable = {}
     user.twoFactor.login = {}
+    user.twoFactor.recoveryCodeHashes = []
     await user.save()
 
     res.json(getAuthPayload(user))
+  } catch (error) {
+    handleRouteError(res, error)
+  }
+})
+
+router.post('/2fa/recovery/start', protect, async (req, res) => {
+  try {
+    const user = await User.findById(req.user._id)
+    if (!user?.twoFactor?.enabled) {
+      return res.status(400).json({ message: 'Enable two-factor authentication first.' })
+    }
+    ensureTwoFactor(user)
+    await sendChallenge(
+      user,
+      user.twoFactor.pending,
+      (challenge) => { user.twoFactor.pending = challenge },
+      'recovery-2fa'
+    )
+    res.json({ message: 'We sent a code to confirm recovery code regeneration.' })
+  } catch (error) {
+    handleRouteError(res, error)
+  }
+})
+
+router.post('/2fa/recovery/confirm', protect, validateOtpOnly, handleValidationErrors, async (req, res) => {
+  try {
+    const user = await User.findById(req.user._id)
+    if (!user?.twoFactor?.enabled) {
+      return res.status(400).json({ message: 'Enable two-factor authentication first.' })
+    }
+    const result = verifyOtpChallenge(user.twoFactor.pending, req.body.otp)
+    if (!result.valid) {
+      await user.save()
+      return res.status(400).json({ message: result.message })
+    }
+    const recoveryCodes = generateRecoveryCodes()
+    user.twoFactor.recoveryCodeHashes = recoveryCodes.map(hashRecoveryCode)
+    user.twoFactor.pending = {}
+    await user.save()
+    res.json({ message: 'New recovery codes created.', recoveryCodes })
   } catch (error) {
     handleRouteError(res, error)
   }
@@ -446,6 +573,51 @@ router.get('/profile', protect, async (req, res) => {
   }
 })
 
+router.get('/sessions', protect, async (req, res) => {
+  try {
+    const user = await User.findById(req.user._id).select('authSessions')
+    const sessions = (user?.authSessions || [])
+      .filter((session) => new Date(session.expiresAt).getTime() > Date.now())
+      .map((session) => ({
+        sessionId: session.sessionId,
+        deviceLabel: session.deviceLabel,
+        createdAt: session.createdAt,
+        lastUsedAt: session.lastUsedAt,
+        expiresAt: session.expiresAt,
+        current: session.sessionId === req.authSessionId
+      }))
+      .sort((a, b) => new Date(b.lastUsedAt) - new Date(a.lastUsedAt))
+    res.json(sessions)
+  } catch (error) {
+    handleRouteError(res, error)
+  }
+})
+
+router.delete('/sessions/:sessionId', protect, async (req, res) => {
+  try {
+    await User.updateOne(
+      { _id: req.user._id },
+      { $pull: { authSessions: { sessionId: req.params.sessionId } } }
+    )
+    if (req.params.sessionId === req.authSessionId) {
+      clearAuthCookies(res)
+    }
+    res.json({ message: 'Session revoked' })
+  } catch (error) {
+    handleRouteError(res, error)
+  }
+})
+
+router.delete('/sessions', protect, async (req, res) => {
+  try {
+    await User.updateOne({ _id: req.user._id }, { $set: { authSessions: [] } })
+    clearAuthCookies(res)
+    res.json({ message: 'All sessions revoked' })
+  } catch (error) {
+    handleRouteError(res, error)
+  }
+})
+
 // UPDATE SELLER PROFILE
 router.put('/seller-profile', protect, validateSellerProfile, handleValidationErrors, async (req, res) => {
   try {
@@ -484,11 +656,25 @@ router.put('/seller-profile', protect, validateSellerProfile, handleValidationEr
         })
       }
 
+      const requiredDocumentTypes = ['identity', 'business', 'address']
+      const uploadedTypes = new Set((user.sellerProfile.documents || []).map(document => document.type))
+      const missingDocuments = requiredDocumentTypes.filter(type => !uploadedTypes.has(type))
+      if (missingDocuments.length) {
+        return res.status(400).json({
+          message: `Upload all required verification documents first: ${missingDocuments.join(', ')}`
+        })
+      }
+
       if (user.sellerProfile.verificationStatus !== 'verified') {
         user.sellerProfile.verificationStatus = 'pending'
         user.sellerProfile.submittedAt = new Date()
         user.sellerProfile.reviewedAt = undefined
         user.sellerProfile.verificationNote = ''
+        user.sellerProfile.auditTrail.push({
+          action: 'seller_submitted',
+          note: 'Seller submitted profile and documents for review.',
+          actor: user._id
+        })
       }
     }
 

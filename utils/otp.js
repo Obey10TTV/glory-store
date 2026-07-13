@@ -52,9 +52,26 @@ const verifyOtpChallenge = (challenge, otp) => {
   return { valid: true }
 }
 
+const generateRecoveryCodes = (count = 8) => Array.from({ length: count }, () => {
+  const value = crypto.randomBytes(6).toString('hex').toUpperCase()
+  return `${value.slice(0, 6)}-${value.slice(6)}`
+})
+
+const hashRecoveryCode = (code) => hashOtp(String(code).replace(/\s/g, '').toUpperCase())
+
+const consumeRecoveryCode = (hashes = [], code) => {
+  const target = hashRecoveryCode(code)
+  const index = hashes.findIndex((value) => value === target)
+  if (index === -1) return { valid: false, hashes }
+  return { valid: true, hashes: hashes.filter((_, itemIndex) => itemIndex !== index) }
+}
+
 module.exports = {
   generateOtp,
   createOtpChallenge,
   isInCooldown,
-  verifyOtpChallenge
+  verifyOtpChallenge,
+  generateRecoveryCodes,
+  hashRecoveryCode,
+  consumeRecoveryCode
 }

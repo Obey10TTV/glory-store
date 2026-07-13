@@ -6,7 +6,9 @@ const mongoose = require('mongoose')
 const cors = require('cors')
 const helmet = require('helmet')
 const mongoSanitize = require('express-mongo-sanitize')
+const cookieParser = require('cookie-parser')
 const fs = require('fs')
+const { randomUUID } = require('crypto')
 
 const userRoutes = require('./routes/userRoutes')
 const productRoutes = require('./routes/productRoutes')
@@ -29,6 +31,8 @@ const {
 } = require('./middleware/security')
 
 const { httpLogger, logger } = require('./middleware/logger')
+const { csrfProtection } = require('./middleware/csrf')
+const { releaseExpiredReservations } = require('./services/reservationService')
 
 const app = express()
 app.disable('x-powered-by')
@@ -71,7 +75,7 @@ const corsOptions = {
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
+  allowedHeaders: ['Content-Type', 'X-CSRF-Token', 'Idempotency-Key'],
   optionsSuccessStatus: 204
 }
 
@@ -86,6 +90,11 @@ if (!fs.existsSync('logs')) {
 app.set('trust proxy', 1)
 
 // 2. HTTP Logger
+app.use((req, res, next) => {
+  req.requestId = String(req.get('x-request-id') || randomUUID()).slice(0, 100)
+  res.setHeader('X-Request-ID', req.requestId)
+  next()
+})
 app.use(httpLogger)
 
 // 3. Security headers
@@ -108,9 +117,13 @@ app.use(helmet({
 // 5. CORS
 app.use(cors(corsOptions))
 
+// Paystack signatures require the unparsed request bytes.
+app.post('/api/paystack/webhook', express.raw({ type: 'application/json' }), paystackRoutes.handleWebhook)
+
 // 6. Body parser
 app.use(express.json({ limit: '10mb' }))
 app.use(express.urlencoded({ extended: true, limit: '10mb' }))
+app.use(cookieParser())
 
 // 7. MongoDB sanitize — NoSQL injection prevention
 app.use(mongoSanitize())
@@ -126,6 +139,9 @@ app.use(ipProtection)
 
 // 11. General rate limiter
 app.use(generalLimiter)
+
+// Every state-changing API request must carry the matching CSRF token.
+app.use('/api', csrfProtection)
 
 // ── DATABASE ──
 const connectDatabase = async () => {
@@ -168,7 +184,20 @@ app.get('/api/health', (req, res) => {
   res.status(databaseConnected ? 200 : 503).json({
     status: databaseConnected ? 'healthy' : 'degraded',
     service: 'glory-store-api',
+    version: process.env.RAILWAY_GIT_COMMIT_SHA?.slice(0, 8) || 'local',
+    uptimeSeconds: Math.floor(process.uptime()),
+    requestId: req.requestId,
     database: databaseConnected ? 'connected' : 'disconnected',
+    timestamp: new Date().toISOString()
+  })
+})
+
+app.get('/api/ready', (req, res) => {
+  const ready = mongoose.connection.readyState === 1
+  res.status(ready ? 200 : 503).json({
+    ready,
+    database: mongoose.connection.readyState,
+    requestId: req.requestId,
     timestamp: new Date().toISOString()
   })
 })
@@ -194,7 +223,8 @@ app.use((err, req, res, next) => {
     stack: err.stack,
     url: req.url,
     method: req.method,
-    ip: req.ip
+    ip: req.ip,
+    requestId: req.requestId
   })
 
   // Don't leak error details in production
@@ -208,6 +238,23 @@ app.use((err, req, res, next) => {
 const PORT = process.env.PORT || 5000
 const HOST = process.env.HOST || '0.0.0.0'
 
-app.listen(PORT, HOST, () => {
+const server = app.listen(PORT, HOST, () => {
   logger.info(`Glory Store server running on ${HOST}:${PORT}`)
+})
+
+const reservationTimer = setInterval(() => {
+  releaseExpiredReservations().catch((error) => {
+    logger.error({ type: 'RESERVATION_SWEEP_FAILED', message: error.message })
+  })
+}, 5 * 60 * 1000)
+reservationTimer.unref()
+
+process.on('unhandledRejection', (error) => {
+  logger.error({ type: 'UNHANDLED_REJECTION', message: error?.message, stack: error?.stack })
+})
+
+process.on('uncaughtException', (error) => {
+  logger.error({ type: 'UNCAUGHT_EXCEPTION', message: error.message, stack: error.stack })
+  server.close(() => process.exit(1))
+  setTimeout(() => process.exit(1), 5000).unref()
 })
