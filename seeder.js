@@ -295,9 +295,11 @@ const seedProducts = async () => {
     })
     console.log('MongoDB connected')
     
-    // Clear existing products
-    await Product.deleteMany({})
-    console.log('Existing products cleared')
+    const resetRequested = process.argv.includes('--reset')
+    if (resetRequested) {
+      await Product.deleteMany({})
+      console.log('Existing products cleared because --reset was supplied')
+    }
 
     // Get admin user
     const adminUser = await User.findOne({ isAdmin: true })
@@ -316,9 +318,18 @@ const seedProducts = async () => {
       reviewedAt: new Date()
     }))
 
-    // Insert products
-    await Product.insertMany(productsWithSeller)
-    console.log(`${products.length} products added successfully!`)
+    const operations = productsWithSeller.map(product => ({
+      updateOne: {
+        filter: { name: product.name, brand: product.brand },
+        update: {
+          $setOnInsert: product,
+          $set: { lowStockThreshold: 5 }
+        },
+        upsert: true
+      }
+    }))
+    const result = await Product.bulkWrite(operations)
+    console.log(`${result.upsertedCount} products added and ${result.matchedCount} existing listings preserved.`)
     process.exit(0)
 
   } catch (error) {

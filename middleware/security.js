@@ -234,6 +234,19 @@ const validateProduct = [
     .trim()
     .isLength({ max: 80 })
     .withMessage('Size must be 80 characters or less'),
+  body('productType')
+    .trim()
+    .isLength({ min: 2, max: 100 })
+    .withMessage('Product type must be between 2 and 100 characters'),
+  body('countryOfOrigin')
+    .trim()
+    .isLength({ min: 2, max: 100 })
+    .withMessage('Country of origin must be between 2 and 100 characters'),
+  body('barcode')
+    .optional({ checkFalsy: true })
+    .trim()
+    .matches(/^[A-Za-z0-9-]{4,64}$/)
+    .withMessage('Barcode must contain 4 to 64 letters, numbers, or dashes'),
   body('brand')
     .trim()
     .isLength({ min: 2, max: 80 })
@@ -242,9 +255,8 @@ const validateProduct = [
     .isURL({ protocols: ['http', 'https'], require_protocol: true })
     .withMessage('Product image must be a valid URL'),
   body('images')
-    .optional()
-    .isArray({ max: 6 })
-    .withMessage('A product can have up to 6 gallery images'),
+    .isArray({ min: 1, max: 6 })
+    .withMessage('Add at least 1 and up to 6 gallery images'),
   body('images.*')
     .optional()
     .isURL({ protocols: ['http', 'https'], require_protocol: true })
@@ -277,8 +289,8 @@ const validateProduct = [
     .withMessage('Variant images must be valid URLs'),
   body('description')
     .trim()
-    .isLength({ min: 10, max: 2000 })
-    .withMessage('Description must be between 10 and 2000 characters'),
+    .isLength({ min: 40, max: 2000 })
+    .withMessage('Description must be between 40 and 2000 characters'),
   body('ingredients')
     .optional({ checkFalsy: true })
     .trim()
@@ -289,6 +301,14 @@ const validateProduct = [
     .trim()
     .isLength({ max: 1200 })
     .withMessage('How to use must be 1200 characters or less'),
+  body('keyBenefits')
+    .isArray({ min: 2, max: 8 })
+    .withMessage('Add between 2 and 8 key benefits'),
+  body('keyBenefits.*')
+    .optional()
+    .trim()
+    .isLength({ min: 2, max: 120 })
+    .withMessage('Each benefit must be between 2 and 120 characters'),
   body('category')
     .isIn([
       'Skincare', 'Haircare', 'Makeup', 'Nails', 'Lashes',
@@ -299,6 +319,10 @@ const validateProduct = [
   body('countInStock')
     .isInt({ min: 0 })
     .withMessage('Stock must be a non-negative integer'),
+  body('lowStockThreshold')
+    .optional()
+    .isInt({ min: 0, max: 1000 })
+    .withMessage('Low-stock threshold must be between 0 and 1000'),
 ]
 
 const validateOrder = [

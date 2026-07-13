@@ -1,6 +1,6 @@
 const test = require('node:test')
 const assert = require('node:assert/strict')
-const { aggregateOrderStatus, calculateTotals, markOrderPaid } = require('../services/orderService')
+const { aggregateOrderStatus, calculateTotals, markOrderPaid, recordConfirmedRefund } = require('../services/orderService')
 
 test('checkout totals are calculated from authoritative line items', () => {
   assert.deepEqual(calculateTotals([{ price: 12.5, quantity: 2 }]), {
@@ -35,4 +35,26 @@ test('line-item fulfillment rolls up to the order', () => {
   aggregateOrderStatus(order)
   assert.equal(order.status, 'Delivered')
   assert.equal(order.isDelivered, true)
+})
+
+test('confirmed refunds cannot exceed the remaining paid value', () => {
+  const order = {
+    isPaid: true,
+    totalPrice: 100,
+    refundedAmount: 0,
+    refundStatus: 'None',
+    refunds: []
+  }
+  assert.equal(recordConfirmedRefund(order, {
+    amount: 35,
+    providerReference: 'refund-001',
+    reason: 'Damaged item',
+    recordedBy: 'admin-id'
+  }), 'PartiallyRefunded')
+  assert.equal(order.refundedAmount, 35)
+  assert.throws(() => recordConfirmedRefund(order, {
+    amount: 66,
+    providerReference: 'refund-002',
+    recordedBy: 'admin-id'
+  }), /remaining paid order value/)
 })

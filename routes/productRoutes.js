@@ -97,13 +97,14 @@ router.get('/:id', async (req, res) => {
 router.post('/', protect, verifiedSeller, validateProduct, handleValidationErrors, async (req, res) => {
   try {
     const {
-      name, price, compareAtPrice, sku, size, description, ingredients,
-      howToUse, category, image, images, variants, brand, countInStock
+      name, price, compareAtPrice, sku, size, productType, countryOfOrigin,
+      barcode, description, ingredients, howToUse, keyBenefits, category,
+      image, images, variants, brand, countInStock, lowStockThreshold
     } = req.body
     const product = await Product.create({
-      name, price, compareAtPrice, sku, size, description, ingredients,
-      howToUse, category,
-      image, images, variants, brand, countInStock,
+      name, price, compareAtPrice, sku, size, productType, countryOfOrigin,
+      barcode, description, ingredients, howToUse, keyBenefits, category,
+      image, images, variants, brand, countInStock, lowStockThreshold,
       seller: req.user._id,
       approvalStatus: req.user.isAdmin ? 'approved' : 'pending',
       submittedAt: new Date(),
@@ -129,8 +130,10 @@ router.put('/:id', protect, verifiedSeller, validateProduct, handleValidationErr
     }
 
     const allowedFields = [
-      'name', 'price', 'compareAtPrice', 'sku', 'size', 'description',
-      'ingredients', 'howToUse', 'category', 'image', 'images', 'variants', 'brand', 'countInStock'
+      'name', 'price', 'compareAtPrice', 'sku', 'size', 'productType',
+      'countryOfOrigin', 'barcode', 'description', 'ingredients', 'howToUse',
+      'keyBenefits', 'category', 'image', 'images', 'variants', 'brand',
+      'countInStock', 'lowStockThreshold'
     ]
     allowedFields.forEach((field) => {
       if (Object.prototype.hasOwnProperty.call(req.body, field)) {

@@ -21,6 +21,14 @@ const canViewOrder = (order, user) => {
   return user.isAdmin || buyerId?.toString() === user._id.toString() || isOrderSeller
 }
 
+const orderForUser = (order, user) => {
+  const value = order.toObject ? order.toObject() : order
+  if (!user.isAdmin) {
+    value.supportNotes = (value.supportNotes || []).filter(note => note.visibility !== 'admin')
+  }
+  return value
+}
+
 const handleError = (res, error) => {
   res.status(error.statusCode || 500).json({
     message: error.statusCode ? error.message : 'Unable to complete the order request'
@@ -74,7 +82,7 @@ router.get('/myorders', protect, async (req, res) => {
   try {
     const orders = await Order.find({ buyer: req.user._id })
       .sort({ createdAt: -1 })
-    res.json(orders)
+    res.json(orders.map(order => orderForUser(order, req.user)))
   } catch (error) {
     handleError(res, error)
   }
@@ -89,7 +97,7 @@ router.get('/seller', protect, async (req, res) => {
     const orders = await Order.find(query)
       .populate('buyer', 'name email')
       .sort({ createdAt: -1 })
-    res.json(orders)
+    res.json(orders.map(order => orderForUser(order, req.user)))
   } catch (error) {
     handleError(res, error)
   }
@@ -158,6 +166,7 @@ router.put('/:id/cancel', protect, async (req, res) => {
       if (order.isPaid) {
         order.status = 'CancellationRequested'
         order.cancellationRequestedAt = new Date()
+        order.refundStatus = 'Requested'
       } else {
         await releaseOrderInventory(order, session)
         order.status = 'Cancelled'
@@ -174,6 +183,76 @@ router.put('/:id/cancel', protect, async (req, res) => {
   }
 })
 
+router.post('/:id/dispute', protect, async (req, res) => {
+  try {
+    const type = String(req.body.type || '')
+    const message = String(req.body.message || '').trim()
+    const allowedTypes = ['damaged', 'missing', 'wrong_item', 'not_as_described', 'other']
+    if (!allowedTypes.includes(type)) {
+      return res.status(400).json({ message: 'Choose a valid issue type' })
+    }
+    if (message.length < 10 || message.length > 1000) {
+      return res.status(400).json({ message: 'Describe the issue in 10 to 1000 characters' })
+    }
+
+    const order = await Order.findById(req.params.id)
+    if (!order) return res.status(404).json({ message: 'Order not found' })
+    if (order.buyer.toString() !== req.user._id.toString()) {
+      return res.status(403).json({ message: 'Only the buyer can open an order dispute' })
+    }
+    if (['Cancelled', 'CancellationRequested'].includes(order.status)) {
+      return res.status(400).json({ message: 'This order is already in a cancellation workflow' })
+    }
+    if (!order.isPaid && order.paymentMethod !== 'PayOnDelivery') {
+      return res.status(400).json({ message: 'Payment must be confirmed before opening a dispute' })
+    }
+    if (order.dispute?.status && !['Resolved', 'Closed'].includes(order.dispute.status)) {
+      return res.status(409).json({ message: 'An active dispute already exists for this order' })
+    }
+
+    order.dispute = { type, message, status: 'Open', openedAt: new Date() }
+    order.supportNotes.push({
+      author: req.user._id,
+      authorRole: 'buyer',
+      message,
+      visibility: 'participants'
+    })
+    await order.save()
+    await sendOrderStatusEmail({ order: await order.populate('buyer', 'name email'), status: 'Issue received' })
+    res.status(201).json(orderForUser(order, req.user))
+  } catch (error) {
+    handleError(res, error)
+  }
+})
+
+router.post('/:id/support-notes', protect, async (req, res) => {
+  try {
+    const message = String(req.body.message || '').trim()
+    if (message.length < 2 || message.length > 1000) {
+      return res.status(400).json({ message: 'Message must be between 2 and 1000 characters' })
+    }
+    const order = await Order.findById(req.params.id)
+    if (!order) return res.status(404).json({ message: 'Order not found' })
+    if (!canViewOrder(order, req.user)) {
+      return res.status(403).json({ message: 'Not authorized to discuss this order' })
+    }
+    const buyerId = order.buyer?._id || order.buyer
+    const authorRole = req.user.isAdmin
+      ? 'admin'
+      : buyerId.toString() === req.user._id.toString() ? 'buyer' : 'seller'
+    order.supportNotes.push({
+      author: req.user._id,
+      authorRole,
+      message,
+      visibility: 'participants'
+    })
+    await order.save()
+    res.status(201).json(orderForUser(order, req.user))
+  } catch (error) {
+    handleError(res, error)
+  }
+})
+
 router.get('/:id', protect, async (req, res) => {
   try {
     const order = await Order.findById(req.params.id).populate('buyer', 'name email')
@@ -181,7 +260,7 @@ router.get('/:id', protect, async (req, res) => {
     if (!canViewOrder(order, req.user)) {
       return res.status(403).json({ message: 'Not authorized to view this order' })
     }
-    res.json(order)
+    res.json(orderForUser(order, req.user))
   } catch (error) {
     handleError(res, error)
   }

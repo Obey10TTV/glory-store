@@ -111,11 +111,33 @@ const markOrderPaid = (order, payment) => {
   return true
 }
 
+const recordConfirmedRefund = (order, { amount, providerReference, reason, recordedBy }) => {
+  const numericAmount = roundMoney(amount)
+  const remaining = roundMoney(Number(order.totalPrice) - Number(order.refundedAmount || 0))
+  if (!order.isPaid) throw Object.assign(new Error('Only paid orders can be refunded'), { statusCode: 400 })
+  if (!Number.isFinite(numericAmount) || numericAmount <= 0 || numericAmount > remaining) {
+    throw Object.assign(new Error('Refund amount exceeds the remaining paid order value'), { statusCode: 400 })
+  }
+  if (String(providerReference || '').trim().length < 3) {
+    throw Object.assign(new Error('A confirmed provider refund reference is required'), { statusCode: 400 })
+  }
+  order.refunds.push({
+    amount: numericAmount,
+    providerReference: String(providerReference).trim(),
+    reason: String(reason || '').trim(),
+    recordedBy
+  })
+  order.refundedAmount = roundMoney(Number(order.refundedAmount || 0) + numericAmount)
+  order.refundStatus = order.refundedAmount >= Number(order.totalPrice) ? 'Refunded' : 'PartiallyRefunded'
+  return order.refundStatus
+}
+
 module.exports = {
   roundMoney,
   calculateTotals,
   reserveOrderItems,
   releaseOrderInventory,
   aggregateOrderStatus,
-  markOrderPaid
+  markOrderPaid,
+  recordConfirmedRefund
 }

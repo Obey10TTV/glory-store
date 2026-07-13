@@ -99,4 +99,22 @@ const sendOrderStatusEmail = async ({ order, status, trackingNumber = '' }) => {
   }
 }
 
-module.exports = { sendOtpEmail, sendOrderStatusEmail }
+const sendPrivacyRequestEmail = async ({ to, name, action }) => {
+  const mailer = getTransporter()
+  if (!mailer) {
+    logger.info({ type: 'PRIVACY_EMAIL_SKIPPED', to, action })
+    return
+  }
+  const requested = action === 'requested'
+  await mailer.sendMail({
+    from: process.env.SMTP_FROM || process.env.SMTP_USER,
+    to,
+    subject: requested ? 'Glory account deletion request received' : 'Glory account deletion request cancelled',
+    text: requested
+      ? `Hi ${name}, we received your account deletion request. Your account remains available while the request is reviewed.`
+      : `Hi ${name}, your Glory account deletion request has been cancelled.`,
+    html: `<div style="font-family:Arial,sans-serif;color:#111;line-height:1.6"><h2>${requested ? 'Deletion request received' : 'Deletion request cancelled'}</h2><p>Hi ${name}, ${requested ? 'we received your account deletion request. Your account remains available while the request is reviewed.' : 'your Glory account deletion request has been cancelled.'}</p></div>`
+  })
+}
+
+module.exports = { sendOtpEmail, sendOrderStatusEmail, sendPrivacyRequestEmail }

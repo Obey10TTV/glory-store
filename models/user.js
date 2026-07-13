@@ -124,6 +124,15 @@ const userSchema = new mongoose.Schema({
     state: String,
     phone: String
   },
+  privacy: {
+    exportRequestedAt: Date,
+    deletionRequestedAt: Date,
+    deletionStatus: {
+      type: String,
+      enum: ['none', 'pending', 'cancelled', 'completed'],
+      default: 'none'
+    }
+  },
   sellerProfile: {
     storeName: {
       type: String,

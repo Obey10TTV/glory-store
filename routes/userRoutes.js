@@ -2,6 +2,8 @@ const express = require('express')
 const router = express.Router()
 const bcrypt = require('bcryptjs')
 const User = require('../models/user')
+const Order = require('../models/order')
+const Product = require('../models/product')
 const { protect } = require('../middleware/auth')
 const {
   validateRegister,
@@ -23,7 +25,8 @@ const {
   hashRecoveryCode,
   consumeRecoveryCode
 } = require('../utils/otp')
-const { sendOtpEmail } = require('../utils/email')
+const { sendOtpEmail, sendPrivacyRequestEmail } = require('../utils/email')
+const { recordAudit } = require('../utils/audit')
 const {
   REFRESH_COOKIE,
   clearAuthCookies,
@@ -51,7 +54,8 @@ const getAuthPayload = (user) => ({
   isAdmin: user.isAdmin,
   isEmailVerified: user.isEmailVerified !== false,
   twoFactorEnabled: Boolean(user.twoFactor?.enabled),
-  sellerProfile: user.sellerProfile
+  sellerProfile: user.sellerProfile,
+  privacy: user.privacy
 })
 
 const establishSession = async (user, req, res) => {
@@ -613,6 +617,89 @@ router.delete('/sessions', protect, async (req, res) => {
     await User.updateOne({ _id: req.user._id }, { $set: { authSessions: [] } })
     clearAuthCookies(res)
     res.json({ message: 'All sessions revoked' })
+  } catch (error) {
+    handleRouteError(res, error)
+  }
+})
+
+router.get('/privacy/export', protect, async (req, res) => {
+  try {
+    const user = await User.findById(req.user._id)
+    if (!user) return res.status(404).json({ message: 'User not found' })
+
+    const [orders, products, reviewedProducts] = await Promise.all([
+      Order.find({ buyer: user._id }).sort({ createdAt: -1 }).lean(),
+      Product.find({ seller: user._id }).sort({ createdAt: -1 }).lean(),
+      Product.find({ 'reviews.user': user._id }).select('name reviews').lean()
+    ])
+    const reviews = reviewedProducts.flatMap(product => (
+      (product.reviews || [])
+        .filter(review => review.user?.toString() === user._id.toString())
+        .map(review => ({ productId: product._id, productName: product.name, ...review }))
+    ))
+    user.privacy.exportRequestedAt = new Date()
+    await user.save()
+    await recordAudit(req, {
+      action: 'privacy_export_created', entityType: 'privacy', entityId: user._id.toString(),
+      summary: 'User downloaded a personal data export'
+    })
+
+    res.setHeader('Content-Disposition', `attachment; filename="glory-data-${user._id}.json"`)
+    res.json({
+      exportedAt: new Date().toISOString(),
+      account: user.toObject(),
+      orders: orders.map(order => ({
+        ...order,
+        supportNotes: (order.supportNotes || []).filter(note => note.visibility !== 'admin')
+      })),
+      sellerProducts: products,
+      reviews
+    })
+  } catch (error) {
+    handleRouteError(res, error)
+  }
+})
+
+router.post('/privacy/deletion-request', protect, async (req, res) => {
+  try {
+    const password = String(req.body.password || '')
+    const user = await User.findById(req.user._id)
+    if (!user || !(await user.matchPassword(password))) {
+      return res.status(401).json({ message: 'Enter your current password to confirm this request' })
+    }
+    const activeOrders = await Order.countDocuments({
+      buyer: user._id,
+      status: { $in: ['Pending', 'Processing', 'Shipped', 'CancellationRequested'] }
+    })
+    if (activeOrders > 0) {
+      return res.status(409).json({ message: 'Resolve active orders before requesting account deletion' })
+    }
+    user.privacy.deletionRequestedAt = new Date()
+    user.privacy.deletionStatus = 'pending'
+    await user.save()
+    await recordAudit(req, {
+      action: 'privacy_deletion_requested', entityType: 'privacy', entityId: user._id.toString(),
+      summary: 'User requested account deletion'
+    })
+    await sendPrivacyRequestEmail({ to: user.email, name: user.name, action: 'requested' })
+    res.json({ message: 'Deletion request received', privacy: user.privacy })
+  } catch (error) {
+    handleRouteError(res, error)
+  }
+})
+
+router.delete('/privacy/deletion-request', protect, async (req, res) => {
+  try {
+    const user = await User.findById(req.user._id)
+    if (!user) return res.status(404).json({ message: 'User not found' })
+    user.privacy.deletionStatus = 'cancelled'
+    await user.save()
+    await recordAudit(req, {
+      action: 'privacy_deletion_cancelled', entityType: 'privacy', entityId: user._id.toString(),
+      summary: 'User cancelled account deletion request'
+    })
+    await sendPrivacyRequestEmail({ to: user.email, name: user.name, action: 'cancelled' })
+    res.json({ message: 'Deletion request cancelled', privacy: user.privacy })
   } catch (error) {
     handleRouteError(res, error)
   }
