@@ -14,7 +14,12 @@ const reviewSchema = new mongoose.Schema({
 const productSchema = new mongoose.Schema({
   name: { type: String, required: true },
   price: { type: Number, required: true },
+  compareAtPrice: { type: Number, min: 0 },
+  sku: { type: String, trim: true, uppercase: true, maxlength: 64, default: '' },
+  size: { type: String, trim: true, maxlength: 80, default: '' },
   description: { type: String, required: true },
+  ingredients: { type: String, trim: true, maxlength: 2000, default: '' },
+  howToUse: { type: String, trim: true, maxlength: 1200, default: '' },
   category: {
     type: String,
     required: true,

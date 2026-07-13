@@ -138,6 +138,23 @@ router.put('/products/:id/status', protect, admin, async (req, res) => {
       return res.status(404).json({ message: 'Product not found' })
     }
 
+    if (approvalStatus === 'approved') {
+      const productSeller = await User.findById(product.seller).select(
+        'isSeller isEmailVerified twoFactor.enabled sellerProfile.verificationStatus'
+      )
+      const sellerCanPublish = productSeller
+        && productSeller.isSeller
+        && productSeller.isEmailVerified !== false
+        && productSeller.twoFactor?.enabled
+        && productSeller.sellerProfile?.verificationStatus === 'verified'
+
+      if (!sellerCanPublish) {
+        return res.status(400).json({
+          message: 'Verify the seller account, email and two-factor authentication before approving this product.'
+        })
+      }
+    }
+
     product.approvalStatus = approvalStatus
     product.reviewedAt = new Date()
     product.rejectionReason = approvalStatus === 'rejected' ? rejectionReason : ''

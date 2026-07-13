@@ -1,7 +1,7 @@
 const express = require('express')
 const router = express.Router()
 const Product = require('../models/product')
-const { protect, seller } = require('../middleware/auth')
+const { protect, seller, verifiedSeller } = require('../middleware/auth')
 const {
   validateProduct,
   handleValidationErrors
@@ -51,11 +51,15 @@ router.get('/:id', async (req, res) => {
 })
 
 // CREATE PRODUCT - Seller only
-router.post('/', protect, seller, validateProduct, handleValidationErrors, async (req, res) => {
+router.post('/', protect, verifiedSeller, validateProduct, handleValidationErrors, async (req, res) => {
   try {
-    const { name, price, description, category, image, brand, countInStock } = req.body
+    const {
+      name, price, compareAtPrice, sku, size, description, ingredients,
+      howToUse, category, image, brand, countInStock
+    } = req.body
     const product = await Product.create({
-      name, price, description, category,
+      name, price, compareAtPrice, sku, size, description, ingredients,
+      howToUse, category,
       image, brand, countInStock,
       seller: req.user._id,
       approvalStatus: req.user.isAdmin ? 'approved' : 'pending',
@@ -71,7 +75,7 @@ router.post('/', protect, seller, validateProduct, handleValidationErrors, async
 })
 
 // UPDATE PRODUCT - Seller only
-router.put('/:id', protect, seller, validateProduct, handleValidationErrors, async (req, res) => {
+router.put('/:id', protect, verifiedSeller, validateProduct, handleValidationErrors, async (req, res) => {
   try {
     const product = await Product.findById(req.params.id)
     if (!product) {
@@ -81,7 +85,10 @@ router.put('/:id', protect, seller, validateProduct, handleValidationErrors, asy
       return res.status(403).json({ message: 'Not authorized to update this product' })
     }
 
-    const allowedFields = ['name', 'price', 'description', 'category', 'image', 'brand', 'countInStock']
+    const allowedFields = [
+      'name', 'price', 'compareAtPrice', 'sku', 'size', 'description',
+      'ingredients', 'howToUse', 'category', 'image', 'brand', 'countInStock'
+    ]
     allowedFields.forEach((field) => {
       if (Object.prototype.hasOwnProperty.call(req.body, field)) {
         product[field] = req.body[field]

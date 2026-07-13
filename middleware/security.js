@@ -79,15 +79,18 @@ const sanitizeInput = (req, res, next) => {
 }
 
 // ── 3. SUSPICIOUS IP DETECTION ──
-const suspiciousIPs = new Set()
+const blockedIPs = new Map()
 const requestCounts = new Map()
 
 const ipProtection = (req, res, next) => {
   const ip = req.ip || req.connection.remoteAddress
 
-  // Block known suspicious IPs
-  if (suspiciousIPs.has(ip)) {
-    return res.status(403).json({ message: 'Access denied.' })
+  const blockedUntil = blockedIPs.get(ip)
+  if (blockedUntil && blockedUntil > Date.now()) {
+    return res.status(429).json({ message: 'Unusual activity detected. Please try again later.' })
+  }
+  if (blockedUntil) {
+    blockedIPs.delete(ip)
   }
 
   // Track request patterns
@@ -104,8 +107,9 @@ const ipProtection = (req, res, next) => {
 
   // Flag IP if more than 200 requests per minute
   if (requests.length > 200) {
-    suspiciousIPs.add(ip)
-    console.warn(`Suspicious IP flagged: ${ip}`)
+    blockedIPs.set(ip, now + (15 * 60 * 1000))
+    requestCounts.delete(ip)
+    console.warn(`Suspicious IP temporarily blocked: ${ip}`)
     return res.status(429).json({ message: 'Unusual activity detected. Access temporarily blocked.' })
   }
 
@@ -125,10 +129,38 @@ const validateRegister = [
     .normalizeEmail()
     .withMessage('Please provide a valid email'),
   body('password')
-    .isLength({ min: 8 })
-    .withMessage('Password must be at least 8 characters')
+    .isLength({ min: 10, max: 128 })
+    .withMessage('Password must be between 10 and 128 characters')
+    .matches(/[a-z]/)
+    .withMessage('Password must contain a lowercase letter')
+    .matches(/[A-Z]/)
+    .withMessage('Password must contain an uppercase letter')
     .matches(/\d/)
-    .withMessage('Password must contain at least one number'),
+    .withMessage('Password must contain at least one number')
+    .matches(/[^A-Za-z0-9]/)
+    .withMessage('Password must contain a special character'),
+]
+
+const validateUpdateProfile = [
+  body('name')
+    .optional()
+    .trim()
+    .isLength({ min: 2, max: 50 })
+    .withMessage('Name must be between 2 and 50 characters')
+    .matches(/^[a-zA-Z\s]+$/)
+    .withMessage('Name can only contain letters and spaces'),
+  body('password')
+    .optional({ checkFalsy: true })
+    .isLength({ min: 10, max: 128 })
+    .withMessage('Password must be between 10 and 128 characters')
+    .matches(/[a-z]/)
+    .withMessage('Password must contain a lowercase letter')
+    .matches(/[A-Z]/)
+    .withMessage('Password must contain an uppercase letter')
+    .matches(/\d/)
+    .withMessage('Password must contain at least one number')
+    .matches(/[^A-Za-z0-9]/)
+    .withMessage('Password must contain a special character'),
 ]
 
 const validateLogin = [
@@ -175,6 +207,22 @@ const validateProduct = [
     .isNumeric()
     .isFloat({ min: 0.01 })
     .withMessage('Price must be a positive number'),
+  body('compareAtPrice')
+    .optional({ checkFalsy: true })
+    .isFloat({ min: 0.01 })
+    .withMessage('Compare-at price must be a positive number')
+    .custom((value, { req }) => Number(value) > Number(req.body.price))
+    .withMessage('Compare-at price must be higher than the selling price'),
+  body('sku')
+    .optional({ checkFalsy: true })
+    .trim()
+    .isLength({ max: 64 })
+    .withMessage('SKU must be 64 characters or less'),
+  body('size')
+    .optional({ checkFalsy: true })
+    .trim()
+    .isLength({ max: 80 })
+    .withMessage('Size must be 80 characters or less'),
   body('brand')
     .trim()
     .isLength({ min: 2, max: 80 })
@@ -186,6 +234,16 @@ const validateProduct = [
     .trim()
     .isLength({ min: 10, max: 2000 })
     .withMessage('Description must be between 10 and 2000 characters'),
+  body('ingredients')
+    .optional({ checkFalsy: true })
+    .trim()
+    .isLength({ max: 2000 })
+    .withMessage('Ingredients must be 2000 characters or less'),
+  body('howToUse')
+    .optional({ checkFalsy: true })
+    .trim()
+    .isLength({ max: 1200 })
+    .withMessage('How to use must be 1200 characters or less'),
   body('category')
     .isIn([
       'Skincare', 'Haircare', 'Makeup', 'Nails', 'Lashes',
@@ -332,6 +390,7 @@ module.exports = {
   sanitizeInput,
   ipProtection,
   validateRegister,
+  validateUpdateProfile,
   validateLogin,
   validateEmailOtp,
   validateEmailOnly,

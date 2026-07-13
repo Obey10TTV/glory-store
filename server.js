@@ -163,6 +163,16 @@ app.use('/api/reviews', reviewRoutes)
 app.use('/api/upload', uploadLimiter, uploadRoutes)
 app.use('/api/admin', adminRoutes)
 
+app.get('/api/health', (req, res) => {
+  const databaseConnected = mongoose.connection.readyState === 1
+  res.status(databaseConnected ? 200 : 503).json({
+    status: databaseConnected ? 'healthy' : 'degraded',
+    service: 'glory-store-api',
+    database: databaseConnected ? 'connected' : 'disconnected',
+    timestamp: new Date().toISOString()
+  })
+})
+
 // ── HEALTH CHECK ──
 app.get('/', (req, res) => {
   res.json({

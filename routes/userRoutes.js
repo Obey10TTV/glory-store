@@ -11,6 +11,7 @@ const {
   validateEmailOnly,
   validateOtpOnly,
   validateSellerProfile,
+  validateUpdateProfile,
   handleValidationErrors
 } = require('../middleware/security')
 const {
@@ -32,7 +33,11 @@ const adminOnly = (req, res, next) => {
 
 // Generate JWT token
 const generateToken = (userId) => {
-  return jwt.sign({ id: userId }, process.env.JWT_SECRET, { expiresIn: '30d' })
+  return jwt.sign(
+    { id: userId },
+    process.env.JWT_SECRET,
+    { expiresIn: process.env.JWT_EXPIRES_IN || '2h' }
+  )
 }
 
 const getAuthPayload = (user) => ({
@@ -495,7 +500,7 @@ router.put('/seller-profile', protect, validateSellerProfile, handleValidationEr
 })
 
 // UPDATE PROFILE
-router.put('/profile', protect, async (req, res) => {
+router.put('/profile', protect, validateUpdateProfile, handleValidationErrors, async (req, res) => {
   try {
     const user = await User.findById(req.user._id)
 

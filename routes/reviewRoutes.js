@@ -1,14 +1,24 @@
 const express = require('express')
 const router = express.Router()
 const Product = require('../models/product')
-const User = require('../models/user')
+const Order = require('../models/order')
 const { protect } = require('../middleware/auth')
 
 
 // ADD REVIEW - POST /api/reviews/:productId
 router.post('/:productId', protect, async (req, res) => {
   try {
-    const { rating, comment } = req.body
+    const rating = Number(req.body.rating)
+    const comment = String(req.body.comment || '').trim()
+
+    if (!Number.isInteger(rating) || rating < 1 || rating > 5) {
+      return res.status(400).json({ message: 'Rating must be a whole number between 1 and 5' })
+    }
+
+    if (comment.length < 10 || comment.length > 1000) {
+      return res.status(400).json({ message: 'Review must be between 10 and 1000 characters' })
+    }
+
     const product = await Product.findById(req.params.productId)
 
     if (!product) {
@@ -23,10 +33,20 @@ router.post('/:productId', protect, async (req, res) => {
       return res.status(400).json({ message: 'You have already reviewed this product' })
     }
 
+    const verifiedOrder = await Order.exists({
+      buyer: req.user._id,
+      'orderItems.product': product._id,
+      $or: [{ isPaid: true }, { isDelivered: true }]
+    })
+
+    if (!verifiedOrder) {
+      return res.status(403).json({ message: 'Only verified purchasers can review this product' })
+    }
+
     const review = {
       user: req.user._id,
       name: req.user.name,
-      rating: Number(rating),
+      rating,
       comment
     }
 
@@ -63,9 +83,17 @@ router.delete('/:productId/:reviewId', protect, async (req, res) => {
       return res.status(404).json({ message: 'Product not found' })
     }
 
-    product.reviews = product.reviews.filter(
-      r => r._id.toString() !== req.params.reviewId
-    )
+    const review = product.reviews.id(req.params.reviewId)
+    if (!review) {
+      return res.status(404).json({ message: 'Review not found' })
+    }
+
+    const ownsReview = review.user.toString() === req.user._id.toString()
+    if (!ownsReview && !req.user.isAdmin) {
+      return res.status(403).json({ message: 'Not authorized to delete this review' })
+    }
+
+    product.reviews.pull(review._id)
 
     product.numReviews = product.reviews.length
     product.rating = product.reviews.length > 0
