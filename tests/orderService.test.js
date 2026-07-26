@@ -5,13 +5,26 @@ const { aggregateOrderStatus, calculateTotals, markOrderPaid, recordConfirmedRef
 test('checkout totals are calculated from authoritative line items', () => {
   assert.deepEqual(calculateTotals([{ price: 12.5, quantity: 2 }]), {
     itemsPrice: 25,
-    shippingPrice: 8,
-    totalPrice: 33
+    shippingPrice: 4.95,
+    totalPrice: 29.95
   })
   assert.deepEqual(calculateTotals([{ price: 37.5, quantity: 2 }]), {
     itemsPrice: 75,
     shippingPrice: 0,
     totalPrice: 75
+  })
+})
+
+test('international delivery uses the global rate and threshold', () => {
+  assert.deepEqual(calculateTotals([{ price: 25, quantity: 2 }], 'Nigeria'), {
+    itemsPrice: 50,
+    shippingPrice: 14.95,
+    totalPrice: 64.95
+  })
+  assert.deepEqual(calculateTotals([{ price: 75, quantity: 2 }], 'United States'), {
+    itemsPrice: 150,
+    shippingPrice: 0,
+    totalPrice: 150
   })
 })
 

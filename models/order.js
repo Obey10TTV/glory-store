@@ -63,12 +63,13 @@ const orderSchema = new mongoose.Schema({
     city: { type: String, required: true },
     state: { type: String, required: true },
     postalCode: { type: String, required: true },
+    country: { type: String, required: true, trim: true, default: 'United Kingdom' },
     phone: { type: String, required: true }
   },
   paymentMethod: {
     type: String,
     required: true,
-    enum: ['Paystack', 'PayOnDelivery', 'Crypto']
+    enum: ['Stripe', 'Paystack', 'PayOnDelivery', 'Crypto']
   },
   paymentResult: {
     id: String,

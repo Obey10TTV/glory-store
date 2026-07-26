@@ -182,7 +182,7 @@ const userSchema = new mongoose.Schema({
     country: {
       type: String,
       trim: true,
-      default: 'Canada'
+      default: 'United Kingdom'
     },
     website: {
       type: String,

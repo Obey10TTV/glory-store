@@ -14,6 +14,7 @@ const userRoutes = require('./routes/userRoutes')
 const productRoutes = require('./routes/productRoutes')
 const orderRoutes = require('./routes/orderRoutes')
 const paystackRoutes = require('./routes/paystackRoutes')
+const stripeRoutes = require('./routes/stripeRoutes')
 const reviewRoutes = require('./routes/reviewRoutes')
 const uploadRoutes = require('./routes/uploadRoutes')
 const adminRoutes = require('./routes/adminRoutes')
@@ -119,6 +120,8 @@ app.use(cors(corsOptions))
 
 // Paystack signatures require the unparsed request bytes.
 app.post('/api/paystack/webhook', express.raw({ type: 'application/json' }), paystackRoutes.handleWebhook)
+// Stripe also verifies signatures against the exact request bytes.
+app.post('/api/stripe/webhook', express.raw({ type: 'application/json' }), stripeRoutes.handleWebhook)
 
 // 6. Body parser
 app.use(express.json({ limit: '10mb' }))
@@ -176,6 +179,7 @@ app.use('/api/users', userRoutes)
 app.use('/api/products', productRoutes)
 app.use('/api/orders', orderRoutes)
 app.use('/api/paystack', paymentLimiter, paystackRoutes)
+app.use('/api/stripe', paymentLimiter, stripeRoutes)
 app.use('/api/reviews', reviewRoutes)
 app.use('/api/upload', uploadLimiter, uploadRoutes)
 app.use('/api/admin', adminRoutes)

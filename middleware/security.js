@@ -3,6 +3,26 @@ const hpp = require('hpp')
 const xss = require('xss')
 const { body, validationResult } = require('express-validator')
 
+const isUnitedKingdom = (country = '') => (
+  ['united kingdom', 'uk', 'great britain', 'gb'].includes(String(country).trim().toLowerCase())
+)
+
+const normalizePhone = (value = '') => {
+  const compact = String(value).trim().replace(/[\s().-]/g, '')
+  return compact.startsWith('0044') ? `+44${compact.slice(4)}` : compact
+}
+
+const isValidInternationalPhone = (value) => {
+  const phone = normalizePhone(value)
+  return /^\+?\d{7,15}$/.test(phone) && !/^\+?0+$/.test(phone)
+}
+
+const isValidUkPhone = (value) => /^(?:\+44|0)[1-9]\d{8,10}$/.test(normalizePhone(value))
+
+const isValidUkPostcode = (value) => (
+  /^(?:GIR\s?0AA|[A-Z]{1,2}\d[A-Z\d]?\s?\d[A-Z]{2})$/i.test(String(value).trim())
+)
+
 // ── 1. ENHANCED RATE LIMITERS ──
 
 // General API limiter
@@ -373,16 +393,27 @@ const validateOrder = [
   body('shippingAddress.state')
     .trim()
     .notEmpty()
-    .withMessage('Province or state is required'),
+    .withMessage('County, state or region is required'),
+  body('shippingAddress.country')
+    .trim()
+    .isLength({ min: 2, max: 80 })
+    .withMessage('Destination country is required'),
   body('shippingAddress.postalCode')
     .trim()
-    .isLength({ min: 3, max: 12 })
-    .withMessage('Postal code is required'),
+    .custom((value, { req }) => {
+      const country = req.body?.shippingAddress?.country
+      if (isUnitedKingdom(country)) return isValidUkPostcode(value)
+      return String(value).trim().length >= 2 && String(value).trim().length <= 16
+    })
+    .withMessage('Please provide a valid postcode or ZIP code'),
   body('shippingAddress.phone')
-    .matches(/^(\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}$/)
+    .custom((value, { req }) => {
+      const country = req.body?.shippingAddress?.country
+      return isUnitedKingdom(country) ? isValidUkPhone(value) : isValidInternationalPhone(value)
+    })
     .withMessage('Please provide a valid phone number'),
   body('paymentMethod')
-    .isIn(['Paystack', 'PayOnDelivery'])
+    .isIn(['Stripe', 'Paystack', 'PayOnDelivery'])
     .withMessage('Invalid payment method'),
 ]
 
@@ -404,7 +435,7 @@ const validateSellerProfile = [
     .withMessage('Please provide a valid business email'),
   body('phone')
     .optional({ checkFalsy: true })
-    .matches(/^(\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}$/)
+    .custom(isValidInternationalPhone)
     .withMessage('Please provide a valid phone number'),
   body('city')
     .optional({ checkFalsy: true })
@@ -415,7 +446,7 @@ const validateSellerProfile = [
     .optional({ checkFalsy: true })
     .trim()
     .isLength({ max: 80 })
-    .withMessage('Province must be 80 characters or less'),
+    .withMessage('County or region must be 80 characters or less'),
   body('country')
     .optional({ checkFalsy: true })
     .trim()
@@ -493,6 +524,10 @@ module.exports = {
   validateProduct,
   validateSellerProfile,
   validateOrder,
+  isUnitedKingdom,
+  isValidInternationalPhone,
+  isValidUkPhone,
+  isValidUkPostcode,
   handleValidationErrors,
   securityHeaders,
   hppProtection

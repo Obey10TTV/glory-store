@@ -838,7 +838,7 @@ router.put('/seller-profile', protect, validateSellerProfile, handleValidationEr
     if (req.body.submitForReview) {
       if (!isSellerProfileComplete(user.sellerProfile)) {
         return res.status(400).json({
-          message: 'Please complete store name, business email, phone, city and province before submitting for verification.'
+          message: 'Please complete store name, business email, phone, city and county or region before submitting for verification.'
         })
       }
 

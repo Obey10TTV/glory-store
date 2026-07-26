@@ -2,9 +2,15 @@ const Product = require('../models/product')
 
 const roundMoney = (value) => Math.round((Number(value) + Number.EPSILON) * 100) / 100
 
-const calculateTotals = (items) => {
+const isUnitedKingdom = (country = '') => (
+  ['united kingdom', 'uk', 'great britain', 'gb'].includes(String(country).trim().toLowerCase())
+)
+
+const calculateTotals = (items, country = 'United Kingdom') => {
   const itemsPrice = roundMoney(items.reduce((sum, item) => sum + item.price * item.quantity, 0))
-  const shippingPrice = itemsPrice >= 75 ? 0 : 8
+  const ukDestination = isUnitedKingdom(country)
+  const freeShippingThreshold = ukDestination ? 75 : 150
+  const shippingPrice = itemsPrice >= freeShippingThreshold ? 0 : (ukDestination ? 4.95 : 14.95)
   return { itemsPrice, shippingPrice, totalPrice: roundMoney(itemsPrice + shippingPrice) }
 }
 
@@ -134,6 +140,7 @@ const recordConfirmedRefund = (order, { amount, providerReference, reason, recor
 
 module.exports = {
   roundMoney,
+  isUnitedKingdom,
   calculateTotals,
   reserveOrderItems,
   releaseOrderInventory,

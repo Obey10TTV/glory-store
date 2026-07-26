@@ -86,6 +86,9 @@ router.post('/initialize', protect, async (req, res) => {
     if (!process.env.PAYSTACK_SECRET_KEY) {
       return res.status(503).json({ message: 'Payment provider is not configured' })
     }
+    if (!process.env.PAYSTACK_CURRENCY) {
+      return res.status(503).json({ message: 'Legacy payment currency is not configured' })
+    }
     const order = await Order.findById(req.body.orderId)
     if (!order) return res.status(404).json({ message: 'Order not found' })
     if (!canAccessOrder(order, req.user)) {
@@ -102,7 +105,7 @@ router.post('/initialize', protect, async (req, res) => {
       body: {
         email: req.user.email,
         amount: Math.round(Number(order.totalPrice) * 100),
-        currency: process.env.PAYSTACK_CURRENCY || 'CAD',
+        currency: process.env.PAYSTACK_CURRENCY,
         metadata: { orderId: order._id.toString(), userId: req.user._id.toString() },
         callback_url: `${getClientOrigin()}/payment/verify`
       }

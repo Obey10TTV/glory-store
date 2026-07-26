@@ -50,7 +50,7 @@ router.post('/', protect, validateOrder, handleValidationErrors, async (req, res
   try {
     await session.withTransaction(async () => {
       const verifiedItems = await reserveOrderItems(req.body.orderItems, session)
-      const totals = calculateTotals(verifiedItems)
+      const totals = calculateTotals(verifiedItems, req.body.shippingAddress.country)
       const [order] = await Order.create([{
         buyer: req.user._id,
         orderItems: verifiedItems,
@@ -60,7 +60,7 @@ router.post('/', protect, validateOrder, handleValidationErrors, async (req, res
         ...totals,
         status: req.body.paymentMethod === 'PayOnDelivery' ? 'Processing' : 'Pending',
         stockReserved: true,
-        reservationExpiresAt: req.body.paymentMethod === 'Paystack'
+        reservationExpiresAt: ['Paystack', 'Stripe'].includes(req.body.paymentMethod)
           ? new Date(Date.now() + 30 * 60 * 1000)
           : undefined
       }], { session })
@@ -110,7 +110,7 @@ router.put('/:id/fulfillment', protect, async (req, res) => {
     }
     const { itemId, status, trackingNumber = '' } = req.body
     if (!['Shipped', 'Delivered'].includes(status)) {
-      return res.status(400).json({ message: 'Invalid fulfillment status' })
+      return res.status(400).json({ message: 'Invalid fulfilment status' })
     }
     if (status === 'Shipped' && String(trackingNumber).trim().length < 3) {
       return res.status(400).json({ message: 'A tracking number is required when shipping an order' })
@@ -119,7 +119,7 @@ router.put('/:id/fulfillment', protect, async (req, res) => {
     const order = await Order.findById(req.params.id).populate('buyer', 'name email')
     if (!order) return res.status(404).json({ message: 'Order not found' })
     if (!order.isPaid && order.paymentMethod !== 'PayOnDelivery') {
-      return res.status(400).json({ message: 'Payment must be confirmed before fulfillment' })
+      return res.status(400).json({ message: 'Payment must be confirmed before fulfilment' })
     }
     if (['Cancelled', 'CancellationRequested'].includes(order.status)) {
       return res.status(400).json({ message: 'This order cannot be fulfilled while cancellation is active' })
