@@ -168,6 +168,7 @@ connectDatabase()
 // ── ROUTES WITH SPECIFIC LIMITERS ──
 app.use('/api/users/login', authLimiter)
 app.use('/api/users/register', authLimiter)
+app.use('/api/users/google', authLimiter)
 app.use('/api/users/verify-email', otpLimiter)
 app.use('/api/users/resend-verification', otpLimiter)
 app.use('/api/users/2fa', otpLimiter)

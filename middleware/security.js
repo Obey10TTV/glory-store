@@ -173,6 +173,25 @@ const validateLogin = [
     .withMessage('Password is required'),
 ]
 
+const validateGoogleAuth = [
+  body('credential')
+    .isString()
+    .isLength({ min: 100, max: 8192 })
+    .withMessage('Google credential is invalid'),
+  body('isSeller')
+    .optional()
+    .isBoolean()
+    .withMessage('Seller selection must be true or false'),
+]
+
+const validateGoogleLink = [
+  ...validateGoogleAuth,
+  body('password')
+    .isString()
+    .isLength({ min: 1, max: 128 })
+    .withMessage('Current password is required'),
+]
+
 const validateEmailOtp = [
   body('email')
     .isEmail()
@@ -465,6 +484,8 @@ module.exports = {
   validateRegister,
   validateUpdateProfile,
   validateLogin,
+  validateGoogleAuth,
+  validateGoogleLink,
   validateEmailOtp,
   validateEmailOnly,
   validateOtpOnly,

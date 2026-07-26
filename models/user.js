@@ -70,7 +70,17 @@ const userSchema = new mongoose.Schema({
   },
   password: {
     type: String,
-    required: true
+    required: function() {
+      return !this.googleSubject
+    }
+  },
+  googleSubject: {
+    type: String,
+    trim: true,
+    unique: true,
+    sparse: true,
+    index: true,
+    select: false
   },
   isEmailVerified: {
     type: Boolean,
@@ -214,6 +224,7 @@ const userSchema = new mongoose.Schema({
 
 const removeSensitiveFields = (ret) => {
   delete ret.password
+  delete ret.googleSubject
   delete ret.emailVerification
   delete ret.authSessions
   ret.twoFactorEnabled = Boolean(ret.twoFactor?.enabled)
@@ -240,7 +251,7 @@ userSchema.set('toObject', {
 })
 
 userSchema.pre('save', async function() {
-  if (!this.isModified('password')) {
+  if (!this.isModified('password') || !this.password) {
     return
   }
   const salt = await bcrypt.genSalt(10)
@@ -248,6 +259,10 @@ userSchema.pre('save', async function() {
 })
 
 userSchema.methods.matchPassword = async function(enteredPassword) {
+  if (!this.password) {
+    return false
+  }
+
   return await bcrypt.compare(enteredPassword, this.password)
 }
 

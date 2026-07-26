@@ -8,6 +8,8 @@ const { protect } = require('../middleware/auth')
 const {
   validateRegister,
   validateLogin,
+  validateGoogleAuth,
+  validateGoogleLink,
   validateEmailOtp,
   validateEmailOnly,
   validateOtpOnly,
@@ -25,6 +27,7 @@ const {
   hashRecoveryCode,
   consumeRecoveryCode
 } = require('../utils/otp')
+const { verifyGoogleCredential } = require('../utils/googleAuth')
 const { sendOtpEmail, sendPrivacyRequestEmail } = require('../utils/email')
 const { recordAudit } = require('../utils/audit')
 const {
@@ -68,6 +71,20 @@ const establishSession = async (user, req, res) => {
   user.authSessions.push(session)
   await user.save()
   setAuthCookies(res, { userId: user._id, sessionId: session.sessionId, refreshToken })
+}
+
+const completeAuthentication = async (user, req, res) => {
+  if (user.twoFactor?.enabled) {
+    await sendTwoFactorLoginCode(user)
+    return res.json({
+      requiresTwoFactor: true,
+      email: user.email,
+      message: 'Enter the verification code sent to your email.'
+    })
+  }
+
+  await establishSession(user, req, res)
+  return res.json(getAuthPayload(user))
 }
 
 const waitError = () => {
@@ -300,6 +317,88 @@ router.post('/login', validateLogin, handleValidationErrors, async (req, res) =>
     res.json(getAuthPayload(user))
   } catch (error) {
     handleRouteError(res, error)
+  }
+})
+
+// GOOGLE SIGN-UP AND SIGN-IN
+router.post('/google', validateGoogleAuth, handleValidationErrors, async (req, res) => {
+  try {
+    const profile = await verifyGoogleCredential(req.body.credential)
+    let user = await User.findOne({ googleSubject: profile.subject }).select('+googleSubject')
+
+    if (!user) {
+      const emailAccount = await User.findOne({ email: profile.email }).select('+googleSubject')
+
+      if (emailAccount) {
+        return res.status(409).json({
+          requiresGoogleLink: true,
+          email: profile.email,
+          message: 'This email already has a Glory account. Enter its password once to link Google securely.'
+        })
+      }
+
+      user = await User.create({
+        name: profile.name,
+        email: profile.email,
+        googleSubject: profile.subject,
+        avatar: profile.avatar,
+        isEmailVerified: true,
+        isSeller: req.body.isSeller === true
+      })
+    } else {
+      if (user.isEmailVerified === false) {
+        user.isEmailVerified = true
+        user.emailVerification = {}
+      }
+      if (!user.avatar && profile.avatar) {
+        user.avatar = profile.avatar
+      }
+      if (user.isModified()) {
+        await user.save()
+      }
+    }
+
+    return completeAuthentication(user, req, res)
+  } catch (error) {
+    if (error?.code === 11000) {
+      return res.status(409).json({ message: 'A Glory account already uses this Google identity.' })
+    }
+    return handleRouteError(res, error)
+  }
+})
+
+// LINK GOOGLE TO AN EXISTING PASSWORD ACCOUNT
+router.post('/google/link', validateGoogleLink, handleValidationErrors, async (req, res) => {
+  try {
+    const profile = await verifyGoogleCredential(req.body.credential)
+    const user = await User.findOne({ email: profile.email }).select('+googleSubject')
+
+    if (!user || !user.password) {
+      return res.status(401).json({ message: 'Account linking could not be verified.' })
+    }
+
+    if (user.googleSubject && user.googleSubject !== profile.subject) {
+      return res.status(409).json({ message: 'This account is already linked to another Google identity.' })
+    }
+
+    if (!(await user.matchPassword(req.body.password))) {
+      return res.status(401).json({ message: 'Account linking could not be verified.' })
+    }
+
+    user.googleSubject = profile.subject
+    user.isEmailVerified = true
+    user.emailVerification = {}
+    if (!user.avatar && profile.avatar) {
+      user.avatar = profile.avatar
+    }
+    await user.save()
+
+    return completeAuthentication(user, req, res)
+  } catch (error) {
+    if (error?.code === 11000) {
+      return res.status(409).json({ message: 'This Google identity is already linked to another account.' })
+    }
+    return handleRouteError(res, error)
   }
 })
 
