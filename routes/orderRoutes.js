@@ -3,14 +3,19 @@ const mongoose = require('mongoose')
 const router = express.Router()
 const Order = require('../models/order')
 const { protect, admin } = require('../middleware/auth')
-const { validateOrder, handleValidationErrors } = require('../middleware/security')
+const { validateOrder, handleValidationErrors, paymentLimiter } = require('../middleware/security')
 const {
   aggregateOrderStatus,
+  assertOrderPaymentAllowed,
   calculateTotals,
+  calculateSellerAllocations,
+  getCheckoutQuote,
   markOrderPaid,
   releaseOrderInventory,
-  reserveOrderItems
+  reserveOrderItems,
+  toPence
 } = require('../services/orderService')
+const { getMarketplaceConfig } = require('../services/marketplaceService')
 const { sendOrderStatusEmail } = require('../utils/email')
 
 const canViewOrder = (order, user) => {
@@ -23,6 +28,35 @@ const canViewOrder = (order, user) => {
 
 const orderForUser = (order, user) => {
   const value = order.toObject ? order.toObject() : order
+  const buyerId = value.buyer?._id || value.buyer
+  const isBuyer = buyerId?.toString() === user._id.toString()
+
+  delete value.paymentSourceId
+  delete value.transferGroup
+
+  if (!user.isAdmin) {
+    delete value.processorFeePence
+    delete value.platformNetPence
+  }
+
+  if (!user.isAdmin && isBuyer) {
+    delete value.sellerAllocations
+    delete value.platformFeeTotalPence
+  }
+
+  if (!user.isAdmin && !isBuyer) {
+    value.orderItems = (value.orderItems || []).filter(
+      item => String(item.seller?._id || item.seller) === String(user._id)
+    )
+    value.sellerAllocations = (value.sellerAllocations || []).filter(
+      allocation => String(allocation.seller?._id || allocation.seller) === String(user._id)
+    )
+    value.platformFeeTotalPence = value.sellerAllocations.reduce(
+      (sum, allocation) => sum + Number(allocation.platformFeePence || 0),
+      0
+    )
+  }
+
   if (!user.isAdmin) {
     value.supportNotes = (value.supportNotes || []).filter(note => note.visibility !== 'admin')
   }
@@ -35,6 +69,18 @@ const handleError = (res, error) => {
   })
 }
 
+router.post('/checkout-options', protect, paymentLimiter, async (req, res) => {
+  try {
+    const country = String(req.body?.shippingAddress?.country || 'United Kingdom')
+      .trim()
+      .slice(0, 80)
+    const quote = await getCheckoutQuote(req.body?.orderItems, country)
+    res.json(quote)
+  } catch (error) {
+    handleError(res, error)
+  }
+})
+
 // CREATE ORDER WITH ATOMIC STOCK RESERVATION
 router.post('/', protect, validateOrder, handleValidationErrors, async (req, res) => {
   const idempotencyKey = String(req.get('idempotency-key') || '').trim()
@@ -43,7 +89,7 @@ router.post('/', protect, validateOrder, handleValidationErrors, async (req, res
   }
 
   const existing = await Order.findOne({ buyer: req.user._id, idempotencyKey })
-  if (existing) return res.json(existing)
+  if (existing) return res.json(orderForUser(existing, req.user))
 
   const session = await mongoose.startSession()
   let createdOrder
@@ -51,6 +97,18 @@ router.post('/', protect, validateOrder, handleValidationErrors, async (req, res
     await session.withTransaction(async () => {
       const verifiedItems = await reserveOrderItems(req.body.orderItems, session)
       const totals = calculateTotals(verifiedItems, req.body.shippingAddress.country)
+      const methodCode = await assertOrderPaymentAllowed(
+        verifiedItems,
+        req.body.paymentMethod,
+        session
+      )
+      const marketplace = getMarketplaceConfig()
+      const sellerAllocations = calculateSellerAllocations(
+        verifiedItems,
+        totals.shippingPrice,
+        marketplace.platformCommissionBps,
+        methodCode
+      )
       const [order] = await Order.create([{
         buyer: req.user._id,
         orderItems: verifiedItems,
@@ -58,6 +116,15 @@ router.post('/', protect, validateOrder, handleValidationErrors, async (req, res
         shippingAddress: req.body.shippingAddress,
         paymentMethod: req.body.paymentMethod,
         ...totals,
+        currency: marketplace.currency,
+        itemsPricePence: toPence(totals.itemsPrice),
+        shippingPricePence: toPence(totals.shippingPrice),
+        totalPricePence: toPence(totals.totalPrice),
+        platformFeeTotalPence: sellerAllocations.reduce(
+          (sum, allocation) => sum + allocation.platformFeePence,
+          0
+        ),
+        sellerAllocations,
         status: req.body.paymentMethod === 'PayOnDelivery' ? 'Processing' : 'Pending',
         stockReserved: true,
         reservationExpiresAt: ['Paystack', 'Stripe'].includes(req.body.paymentMethod)
@@ -66,11 +133,11 @@ router.post('/', protect, validateOrder, handleValidationErrors, async (req, res
       }], { session })
       createdOrder = order
     })
-    res.status(201).json(createdOrder)
+    res.status(201).json(orderForUser(createdOrder, req.user))
   } catch (error) {
     if (error.code === 11000) {
       const duplicate = await Order.findOne({ buyer: req.user._id, idempotencyKey })
-      if (duplicate) return res.json(duplicate)
+      if (duplicate) return res.json(orderForUser(duplicate, req.user))
     }
     handleError(res, error)
   } finally {
@@ -141,7 +208,7 @@ router.put('/:id/fulfillment', protect, async (req, res) => {
     aggregateOrderStatus(order)
     await order.save()
     await sendOrderStatusEmail({ order, status, trackingNumber: item.trackingNumber })
-    res.json(order)
+    res.json(orderForUser(order, req.user))
   } catch (error) {
     handleError(res, error)
   }
@@ -175,7 +242,7 @@ router.put('/:id/cancel', protect, async (req, res) => {
       }
       updatedOrder = await order.save({ session })
     })
-    res.json(updatedOrder)
+    res.json(orderForUser(updatedOrder, req.user))
   } catch (error) {
     handleError(res, error)
   } finally {

@@ -215,6 +215,57 @@ const userSchema = new mongoose.Schema({
       type: [sellerAuditSchema],
       default: []
     },
+    acceptedPaymentMethods: {
+      type: [{
+        type: String,
+        enum: ['card', 'bank_transfer', 'crypto']
+      }],
+      default: ['card']
+    },
+    activationStatus: {
+      type: String,
+      enum: ['unpaid', 'pending', 'paid', 'waived'],
+      default: 'unpaid'
+    },
+    activationAmountPence: {
+      type: Number,
+      min: 0,
+      default: 0
+    },
+    activationCurrency: {
+      type: String,
+      enum: ['GBP'],
+      default: 'GBP'
+    },
+    activationPaymentReference: {
+      type: String,
+      trim: true,
+      default: ''
+    },
+    activationPaidAt: Date,
+    stripeAccountId: {
+      type: String,
+      trim: true,
+      default: ''
+    },
+    payoutStatus: {
+      type: String,
+      enum: ['not_started', 'pending', 'active', 'restricted'],
+      default: 'not_started'
+    },
+    stripeDetailsSubmitted: {
+      type: Boolean,
+      default: false
+    },
+    stripeChargesEnabled: {
+      type: Boolean,
+      default: false
+    },
+    stripePayoutsEnabled: {
+      type: Boolean,
+      default: false
+    },
+    payoutStatusUpdatedAt: Date,
     submittedAt: Date,
     reviewedAt: Date
   }
@@ -238,6 +289,10 @@ const removeSensitiveFields = (ret) => {
       delete safeDocument.reviewedBy
       return safeDocument
     })
+  }
+  if (ret.sellerProfile) {
+    delete ret.sellerProfile.stripeAccountId
+    delete ret.sellerProfile.activationPaymentReference
   }
   return ret
 }

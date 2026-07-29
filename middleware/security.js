@@ -461,6 +461,14 @@ const validateSellerProfile = [
     .trim()
     .isLength({ max: 80 })
     .withMessage('Instagram handle must be 80 characters or less'),
+  body('acceptedPaymentMethods')
+    .optional()
+    .isArray({ min: 1, max: 3 })
+    .withMessage('Choose at least one supported payment method'),
+  body('acceptedPaymentMethods.*')
+    .optional()
+    .isIn(['card', 'bank_transfer', 'crypto'])
+    .withMessage('Unsupported payment method'),
   body('submitForReview')
     .optional()
     .isBoolean()

@@ -49,17 +49,20 @@ const adminOnly = (req, res, next) => {
   return res.status(403).json({ message: 'Not authorized as admin' })
 }
 
-const getAuthPayload = (user) => ({
-  _id: user._id,
-  name: user.name,
-  email: user.email,
-  isSeller: user.isSeller,
-  isAdmin: user.isAdmin,
-  isEmailVerified: user.isEmailVerified !== false,
-  twoFactorEnabled: Boolean(user.twoFactor?.enabled),
-  sellerProfile: user.sellerProfile,
-  privacy: user.privacy
-})
+const getAuthPayload = (user) => {
+  const safeUser = typeof user.toJSON === 'function' ? user.toJSON() : user
+  return {
+    _id: safeUser._id,
+    name: safeUser.name,
+    email: safeUser.email,
+    isSeller: safeUser.isSeller,
+    isAdmin: safeUser.isAdmin,
+    isEmailVerified: safeUser.isEmailVerified !== false,
+    twoFactorEnabled: Boolean(user.twoFactor?.enabled),
+    sellerProfile: safeUser.sellerProfile,
+    privacy: safeUser.privacy
+  }
+}
 
 const establishSession = async (user, req, res) => {
   const now = Date.now()
@@ -747,10 +750,21 @@ router.get('/privacy/export', protect, async (req, res) => {
     res.json({
       exportedAt: new Date().toISOString(),
       account: user.toObject(),
-      orders: orders.map(order => ({
-        ...order,
-        supportNotes: (order.supportNotes || []).filter(note => note.visibility !== 'admin')
-      })),
+      orders: orders.map(order => {
+        const {
+          sellerAllocations,
+          platformFeeTotalPence,
+          processorFeePence,
+          platformNetPence,
+          paymentSourceId,
+          transferGroup,
+          ...buyerOrder
+        } = order
+        return {
+          ...buyerOrder,
+          supportNotes: (order.supportNotes || []).filter(note => note.visibility !== 'admin')
+        }
+      }),
       sellerProducts: products,
       reviews
     })
@@ -826,7 +840,8 @@ router.put('/seller-profile', protect, validateSellerProfile, handleValidationEr
       'province',
       'country',
       'website',
-      'instagram'
+      'instagram',
+      'acceptedPaymentMethods'
     ]
 
     allowedFields.forEach((field) => {

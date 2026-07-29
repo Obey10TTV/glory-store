@@ -3,7 +3,14 @@ const Stripe = require('stripe')
 const router = express.Router()
 const { protect } = require('../middleware/auth')
 const Order = require('../models/order')
+const User = require('../models/user')
 const { markOrderPaid } = require('../services/orderService')
+const { getMarketplaceConfig } = require('../services/marketplaceService')
+const {
+  getSellerCommerceStatus,
+  transferOrderAllocations,
+  updateConnectedAccountStatus
+} = require('../services/stripeMarketplaceService')
 const { sendOrderStatusEmail } = require('../utils/email')
 const { logger } = require('../middleware/logger')
 
@@ -16,14 +23,44 @@ const configuredClientOrigins = [
 ].filter(Boolean)
 
 const getClientOrigin = () => configuredClientOrigins[0]
-  || (process.env.NODE_ENV === 'production' ? 'https://glory-ca.vercel.app' : 'http://localhost:3000')
+  || (process.env.NODE_ENV === 'production' ? 'https://glory-uk.vercel.app' : 'http://localhost:3000')
 
 const canAccessOrder = (order, user) => {
   const buyerId = order.buyer?._id || order.buyer
   return user.isAdmin || buyerId?.toString() === user._id.toString()
 }
 
-const applyVerifiedSession = async (session) => {
+const applySellerActivationSession = async (session) => {
+  if (session?.payment_status !== 'paid' || session.metadata?.purpose !== 'seller_activation') {
+    return null
+  }
+
+  const marketplace = getMarketplaceConfig()
+  const userId = session.metadata?.userId
+  if (!userId) throw Object.assign(new Error('Seller activation metadata is incomplete'), { statusCode: 400 })
+  if (
+    session.currency !== 'gbp'
+    || Number(session.amount_total) !== marketplace.sellerActivationFeePence
+  ) {
+    throw Object.assign(new Error('Seller activation currency or amount does not match'), { statusCode: 400 })
+  }
+
+  const user = await User.findById(userId)
+  if (!user?.isSeller) {
+    throw Object.assign(new Error('Seller account not found'), { statusCode: 404 })
+  }
+  if (user.sellerProfile.activationStatus === 'paid') return user
+
+  user.sellerProfile.activationStatus = 'paid'
+  user.sellerProfile.activationAmountPence = marketplace.sellerActivationFeePence
+  user.sellerProfile.activationCurrency = marketplace.currency
+  user.sellerProfile.activationPaymentReference = session.id
+  user.sellerProfile.activationPaidAt = user.sellerProfile.activationPaidAt || new Date()
+  await user.save()
+  return user
+}
+
+const applyVerifiedOrderSession = async (session) => {
   if (session?.payment_status !== 'paid') return null
 
   const orderId = session.metadata?.orderId
@@ -32,7 +69,7 @@ const applyVerifiedSession = async (session) => {
   const order = await Order.findById(orderId).populate('buyer', 'name email')
   if (!order) throw Object.assign(new Error('Order not found'), { statusCode: 404 })
 
-  const expectedAmount = Math.round(Number(order.totalPrice) * 100)
+  const expectedAmount = Number(order.totalPricePence || Math.round(Number(order.totalPrice) * 100))
   if (session.currency !== 'gbp' || Number(session.amount_total) !== expectedAmount) {
     throw Object.assign(new Error('Payment currency or amount does not match the order total'), { statusCode: 400 })
   }
@@ -50,11 +87,199 @@ const applyVerifiedSession = async (session) => {
     await order.save()
     await sendOrderStatusEmail({ order, status: 'Payment confirmed' })
   }
+  await transferOrderAllocations({
+    stripe,
+    order,
+    paymentIntentId: String(session.payment_intent || ''),
+    logger
+  })
   return order
 }
 
 router.get('/status', (req, res) => {
-  res.json({ enabled: Boolean(stripe), currency: 'GBP' })
+  const marketplace = getMarketplaceConfig()
+  res.json({
+    enabled: Boolean(stripe),
+    currency: marketplace.currency,
+    sellerActivationRequired: marketplace.sellerActivationRequired,
+    sellerActivationFeePence: marketplace.sellerActivationFeePence,
+    platformCommissionBps: marketplace.platformCommissionBps,
+    paymentMethods: marketplace.paymentMethods
+  })
+})
+
+router.get('/seller/status', protect, async (req, res) => {
+  try {
+    const marketplace = getMarketplaceConfig()
+    const user = await User.findById(req.user._id)
+    if (!user?.isSeller) return res.status(403).json({ message: 'Not authorized as seller' })
+
+    if (stripe && user.sellerProfile.stripeAccountId) {
+      const account = await stripe.accounts.retrieve(user.sellerProfile.stripeAccountId)
+      await updateConnectedAccountStatus(user, account)
+    }
+
+    res.json({
+      ...getSellerCommerceStatus(user, marketplace),
+      paymentMethods: marketplace.paymentMethods
+    })
+  } catch (error) {
+    res.status(error.statusCode || 500).json({
+      message: error.statusCode ? error.message : 'Unable to load seller payment status'
+    })
+  }
+})
+
+router.post('/seller/activation', protect, async (req, res) => {
+  try {
+    if (!stripe) return res.status(503).json({ message: 'Seller activation payments are not configured yet' })
+
+    const marketplace = getMarketplaceConfig()
+    const user = await User.findById(req.user._id)
+    if (!user?.isSeller) return res.status(403).json({ message: 'Not authorized as seller' })
+    if (user.isEmailVerified === false || !user.twoFactor?.enabled) {
+      return res.status(403).json({ message: 'Verify your email and enable two-factor authentication first' })
+    }
+    if (user.sellerProfile.verificationStatus !== 'verified') {
+      return res.status(403).json({ message: 'Seller verification must be approved before activation payment' })
+    }
+    if (['paid', 'waived'].includes(user.sellerProfile.activationStatus)) {
+      return res.json({ alreadyActive: true })
+    }
+    if (!marketplace.sellerActivationRequired || marketplace.sellerActivationFeePence === 0) {
+      user.sellerProfile.activationStatus = 'waived'
+      user.sellerProfile.activationAmountPence = 0
+      await user.save()
+      return res.json({ alreadyActive: true })
+    }
+
+    if (
+      user.sellerProfile.activationStatus === 'pending'
+      && user.sellerProfile.activationPaymentReference
+    ) {
+      const pendingSession = await stripe.checkout.sessions.retrieve(
+        user.sellerProfile.activationPaymentReference
+      )
+      if (pendingSession.payment_status === 'paid') {
+        await applySellerActivationSession(pendingSession)
+        return res.json({ alreadyActive: true })
+      }
+      if (pendingSession.status === 'open' && pendingSession.url) {
+        return res.json({ url: pendingSession.url, sessionId: pendingSession.id })
+      }
+    }
+
+    const session = await stripe.checkout.sessions.create({
+      mode: 'payment',
+      customer_email: user.email,
+      line_items: [{
+        price_data: {
+          currency: 'gbp',
+          unit_amount: marketplace.sellerActivationFeePence,
+          product_data: {
+            name: 'Glory seller activation',
+            description: 'One-time marketplace seller account activation'
+          }
+        },
+        quantity: 1
+      }],
+      metadata: {
+        purpose: 'seller_activation',
+        userId: user._id.toString()
+      },
+      payment_intent_data: {
+        metadata: {
+          purpose: 'seller_activation',
+          userId: user._id.toString()
+        }
+      },
+      success_url: `${getClientOrigin()}/seller?activation=success&session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${getClientOrigin()}/seller?activation=cancelled`
+    })
+
+    user.sellerProfile.activationStatus = 'pending'
+    user.sellerProfile.activationAmountPence = marketplace.sellerActivationFeePence
+    user.sellerProfile.activationCurrency = marketplace.currency
+    user.sellerProfile.activationPaymentReference = session.id
+    await user.save()
+    res.json({ url: session.url, sessionId: session.id })
+  } catch (error) {
+    res.status(error.statusCode || 500).json({
+      message: error.statusCode ? error.message : 'Seller activation payment could not be started'
+    })
+  }
+})
+
+router.get('/seller/activation/verify/:sessionId', protect, async (req, res) => {
+  try {
+    if (!stripe) return res.status(503).json({ message: 'Seller activation payments are not configured yet' })
+    const session = await stripe.checkout.sessions.retrieve(req.params.sessionId)
+    if (String(session.metadata?.userId) !== String(req.user._id)) {
+      return res.status(403).json({ message: 'Not authorized to verify this activation' })
+    }
+    const user = await applySellerActivationSession(session)
+    res.json({
+      paymentStatus: session.payment_status,
+      activationStatus: user?.sellerProfile?.activationStatus || 'pending'
+    })
+  } catch (error) {
+    res.status(error.statusCode || 500).json({
+      message: error.statusCode ? error.message : 'Seller activation verification failed'
+    })
+  }
+})
+
+router.post('/connect/onboard', protect, async (req, res) => {
+  try {
+    if (!stripe) return res.status(503).json({ message: 'Seller payouts are not configured yet' })
+
+    const marketplace = getMarketplaceConfig()
+    const user = await User.findById(req.user._id)
+    if (!user?.isSeller) return res.status(403).json({ message: 'Not authorized as seller' })
+    if (user.isEmailVerified === false || !user.twoFactor?.enabled) {
+      return res.status(403).json({ message: 'Verify your email and enable two-factor authentication first' })
+    }
+    if (user.sellerProfile.verificationStatus !== 'verified') {
+      return res.status(403).json({ message: 'Seller verification must be approved before payout onboarding' })
+    }
+    if (
+      marketplace.sellerActivationRequired
+      && !['paid', 'waived'].includes(user.sellerProfile.activationStatus)
+    ) {
+      return res.status(403).json({ message: 'Complete the seller activation payment first' })
+    }
+
+    if (!user.sellerProfile.stripeAccountId) {
+      const account = await stripe.accounts.create({
+        type: 'express',
+        country: 'GB',
+        email: user.sellerProfile.businessEmail || user.email,
+        capabilities: {
+          card_payments: { requested: true },
+          transfers: { requested: true }
+        },
+        metadata: { userId: user._id.toString() }
+      }, {
+        idempotencyKey: `glory-connect-account-${user._id}`
+      })
+      user.sellerProfile.stripeAccountId = account.id
+      user.sellerProfile.payoutStatus = 'pending'
+      user.sellerProfile.payoutStatusUpdatedAt = new Date()
+      await user.save()
+    }
+
+    const accountLink = await stripe.accountLinks.create({
+      account: user.sellerProfile.stripeAccountId,
+      refresh_url: `${getClientOrigin()}/seller?payout=refresh`,
+      return_url: `${getClientOrigin()}/seller?payout=return`,
+      type: 'account_onboarding'
+    })
+    res.json({ url: accountLink.url })
+  } catch (error) {
+    res.status(error.statusCode || 500).json({
+      message: error.statusCode ? error.message : 'Seller payout onboarding could not be started'
+    })
+  }
 })
 
 router.post('/initialize', protect, async (req, res) => {
@@ -76,6 +301,7 @@ router.post('/initialize', protect, async (req, res) => {
       return res.status(409).json({ message: 'This checkout reservation expired. Return to your bag and try again.' })
     }
 
+    order.transferGroup = order.transferGroup || `GLORY_ORDER_${order._id}`
     const session = await stripe.checkout.sessions.create({
       mode: 'payment',
       customer_email: req.user.email,
@@ -96,6 +322,7 @@ router.post('/initialize', protect, async (req, res) => {
         userId: req.user._id.toString()
       },
       payment_intent_data: {
+        transfer_group: order.transferGroup,
         metadata: {
           orderId: order._id.toString(),
           userId: req.user._id.toString()
@@ -129,7 +356,7 @@ router.get('/verify/:sessionId', protect, async (req, res) => {
       return res.status(403).json({ message: 'Not authorized to verify this order' })
     }
 
-    await applyVerifiedSession(session)
+    await applyVerifiedOrderSession(session)
     res.json({
       paymentStatus: session.payment_status,
       orderId: order._id
@@ -155,7 +382,19 @@ const handleWebhook = async (req, res) => {
     )
 
     if (['checkout.session.completed', 'checkout.session.async_payment_succeeded'].includes(event.type)) {
-      await applyVerifiedSession(event.data.object)
+      const session = event.data.object
+      if (session.metadata?.purpose === 'seller_activation') {
+        await applySellerActivationSession(session)
+      } else {
+        await applyVerifiedOrderSession(session)
+      }
+    }
+    if (event.type === 'account.updated') {
+      const account = event.data.object
+      const user = account.metadata?.userId
+        ? await User.findById(account.metadata.userId)
+        : await User.findOne({ 'sellerProfile.stripeAccountId': account.id })
+      if (user) await updateConnectedAccountStatus(user, account)
     }
     res.sendStatus(200)
   } catch (error) {
@@ -165,6 +404,7 @@ const handleWebhook = async (req, res) => {
 }
 
 router.handleWebhook = handleWebhook
-router.applyVerifiedSession = applyVerifiedSession
+router.applyVerifiedSession = applyVerifiedOrderSession
+router.applySellerActivationSession = applySellerActivationSession
 
 module.exports = router

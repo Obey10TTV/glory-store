@@ -44,6 +44,7 @@ const fallbackAllowedOrigins = [
   'http://127.0.0.1:3000',
   'http://127.0.0.1:3001',
   'https://glory-frontend-gray.vercel.app',
+  'https://glory-uk.vercel.app',
   'https://glory-ca.vercel.app',
   'https://glory-ca-obioma-ajoku-s-projects.vercel.app',
   'https://glory-ca-obey10ttv-obioma-ajoku-s-projects.vercel.app',

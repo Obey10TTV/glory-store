@@ -53,6 +53,28 @@ const orderItemSchema = new mongoose.Schema({
   deliveredAt: Date
 })
 
+const sellerAllocationSchema = new mongoose.Schema({
+  seller: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+  paymentMethod: {
+    type: String,
+    enum: ['card', 'bank_transfer', 'crypto'],
+    required: true
+  },
+  itemSubtotalPence: { type: Number, required: true, min: 0 },
+  shippingPence: { type: Number, required: true, min: 0 },
+  grossPence: { type: Number, required: true, min: 0 },
+  platformFeePence: { type: Number, required: true, min: 0 },
+  sellerNetPence: { type: Number, required: true, min: 0 },
+  payoutStatus: {
+    type: String,
+    enum: ['pending', 'blocked', 'processing', 'paid', 'failed', 'reversed'],
+    default: 'pending'
+  },
+  transferId: { type: String, trim: true, default: '' },
+  payoutFailureReason: { type: String, trim: true, maxlength: 300, default: '' },
+  paidOutAt: Date
+})
+
 const orderSchema = new mongoose.Schema({
   buyer: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
   orderItems: [orderItemSchema],
@@ -78,9 +100,19 @@ const orderSchema = new mongoose.Schema({
     reference: String
   },
   paymentReference: { type: String, trim: true, index: true, sparse: true },
+  currency: { type: String, enum: ['GBP'], default: 'GBP' },
+  itemsPricePence: { type: Number, required: true, default: 0, min: 0 },
+  shippingPricePence: { type: Number, required: true, default: 0, min: 0 },
+  totalPricePence: { type: Number, required: true, default: 0, min: 0 },
   itemsPrice: { type: Number, required: true, default: 0 },
   shippingPrice: { type: Number, required: true, default: 0 },
   totalPrice: { type: Number, required: true, default: 0 },
+  platformFeeTotalPence: { type: Number, required: true, default: 0, min: 0 },
+  processorFeePence: { type: Number, required: true, default: 0, min: 0 },
+  platformNetPence: { type: Number, required: true, default: 0 },
+  sellerAllocations: { type: [sellerAllocationSchema], default: [] },
+  transferGroup: { type: String, trim: true, default: '' },
+  paymentSourceId: { type: String, trim: true, default: '' },
   isPaid: { type: Boolean, required: true, default: false },
   paidAt: Date,
   isDelivered: { type: Boolean, required: true, default: false },

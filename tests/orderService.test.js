@@ -1,6 +1,12 @@
 const test = require('node:test')
 const assert = require('node:assert/strict')
-const { aggregateOrderStatus, calculateTotals, markOrderPaid, recordConfirmedRefund } = require('../services/orderService')
+const {
+  aggregateOrderStatus,
+  calculateSellerAllocations,
+  calculateTotals,
+  markOrderPaid,
+  recordConfirmedRefund
+} = require('../services/orderService')
 
 test('checkout totals are calculated from authoritative line items', () => {
   assert.deepEqual(calculateTotals([{ price: 12.5, quantity: 2 }]), {
@@ -26,6 +32,52 @@ test('international delivery uses the global rate and threshold', () => {
     shippingPrice: 0,
     totalPrice: 150
   })
+})
+
+test('multi-seller totals allocate every penny and retain the configured commission', () => {
+  const allocations = calculateSellerAllocations([
+    { seller: 'seller-a', price: 10, quantity: 1 },
+    { seller: 'seller-b', price: 15, quantity: 2 }
+  ], 4.95, 1000)
+
+  assert.deepEqual(allocations, [
+    {
+      seller: 'seller-a',
+      paymentMethod: 'card',
+      itemSubtotalPence: 1000,
+      shippingPence: 124,
+      grossPence: 1124,
+      platformFeePence: 100,
+      sellerNetPence: 1024,
+      payoutStatus: 'pending'
+    },
+    {
+      seller: 'seller-b',
+      paymentMethod: 'card',
+      itemSubtotalPence: 3000,
+      shippingPence: 371,
+      grossPence: 3371,
+      platformFeePence: 300,
+      sellerNetPence: 3071,
+      payoutStatus: 'pending'
+    }
+  ])
+  assert.equal(allocations.reduce((sum, entry) => sum + entry.grossPence, 0), 4495)
+  assert.equal(allocations.reduce((sum, entry) => sum + entry.platformFeePence, 0), 400)
+  assert.equal(allocations.reduce((sum, entry) => sum + entry.sellerNetPence, 0), 4095)
+})
+
+test('allocation rounding is deterministic when a penny cannot be divided evenly', () => {
+  const allocations = calculateSellerAllocations([
+    { seller: 'seller-b', price: 1, quantity: 1 },
+    { seller: 'seller-a', price: 1, quantity: 1 },
+    { seller: 'seller-c', price: 1, quantity: 1 }
+  ], 0.01, 0)
+
+  assert.deepEqual(
+    allocations.map(entry => [entry.seller, entry.shippingPence]),
+    [['seller-a', 1], ['seller-b', 0], ['seller-c', 0]]
+  )
 })
 
 test('payment updates are idempotent', () => {

@@ -9,6 +9,7 @@ const cloudinary = require('cloudinary').v2
 const { protect, admin } = require('../middleware/auth')
 const { aggregateOrderStatus, recordConfirmedRefund, releaseOrderInventory } = require('../services/orderService')
 const { sendOrderStatusEmail } = require('../utils/email')
+const { getMarketplaceConfig } = require('../services/marketplaceService')
 const { recordAudit } = require('../utils/audit')
 
 cloudinary.config({
@@ -118,10 +119,38 @@ router.get('/stats', protect, admin, async (req, res) => {
       $expr: { $lte: ['$countInStock', '$lowStockThreshold'] }
     })
     const privacyRequests = await User.countDocuments({ 'privacy.deletionStatus': 'pending' })
-    const totalRevenue = await Order.aggregate([
+    const marketplaceMoney = await Order.aggregate([
       { $match: { isPaid: true } },
-      { $group: { _id: null, total: { $sum: '$totalPrice' } } }
+      {
+        $group: {
+          _id: null,
+          grossMerchandiseValuePence: {
+            $sum: {
+              $ifNull: [
+                '$totalPricePence',
+                { $round: [{ $multiply: ['$totalPrice', 100] }, 0] }
+              ]
+            }
+          },
+          platformCommissionPence: { $sum: { $ifNull: ['$platformFeeTotalPence', 0] } },
+          processorFeePence: { $sum: { $ifNull: ['$processorFeePence', 0] } },
+          platformNetPence: { $sum: { $ifNull: ['$platformNetPence', 0] } }
+        }
+      }
     ])
+    const activationMoney = await User.aggregate([
+      { $match: { isSeller: true, 'sellerProfile.activationStatus': 'paid' } },
+      {
+        $group: {
+          _id: null,
+          sellerActivationRevenuePence: { $sum: '$sellerProfile.activationAmountPence' }
+        }
+      }
+    ])
+    const paidOrders = marketplaceMoney[0] || {}
+    const sellerActivationRevenuePence = activationMoney[0]?.sellerActivationRevenuePence || 0
+    const grossMerchandiseValuePence = paidOrders.grossMerchandiseValuePence || 0
+    const platformCommissionPence = paidOrders.platformCommissionPence || 0
 
     res.json({
       totalUsers,
@@ -136,7 +165,13 @@ router.get('/stats', protect, admin, async (req, res) => {
       activeDisputes,
       lowStockProducts,
       privacyRequests,
-      totalRevenue: totalRevenue[0] ? totalRevenue[0].total : 0
+      totalRevenue: grossMerchandiseValuePence / 100,
+      grossMerchandiseValuePence,
+      platformCommissionPence,
+      processorFeePence: paidOrders.processorFeePence || 0,
+      platformNetPence: paidOrders.platformNetPence || 0,
+      sellerActivationRevenuePence,
+      platformFeesCollectedPence: platformCommissionPence + sellerActivationRevenuePence
     })
   } catch (error) {
     res.status(500).json({ message: error.message })
@@ -176,17 +211,23 @@ router.put('/products/:id/status', protect, admin, async (req, res) => {
 
     if (approvalStatus === 'approved') {
       const productSeller = await User.findById(product.seller).select(
-        'isSeller isEmailVerified twoFactor.enabled sellerProfile.verificationStatus'
+        'isAdmin isSeller isEmailVerified twoFactor.enabled sellerProfile.verificationStatus sellerProfile.activationStatus sellerProfile.payoutStatus'
       )
-      const sellerCanPublish = productSeller
+      const marketplace = getMarketplaceConfig()
+      const sellerCanPublish = productSeller?.isAdmin || (productSeller
         && productSeller.isSeller
         && productSeller.isEmailVerified !== false
         && productSeller.twoFactor?.enabled
         && productSeller.sellerProfile?.verificationStatus === 'verified'
+        && (
+          !marketplace.sellerActivationRequired
+          || ['paid', 'waived'].includes(productSeller.sellerProfile?.activationStatus)
+        )
+        && productSeller.sellerProfile?.payoutStatus === 'active')
 
       if (!sellerCanPublish) {
         return res.status(400).json({
-          message: 'Verify the seller account, email and two-factor authentication before approving this product.'
+          message: 'Verify the seller, activation fee, payout account, email and two-factor authentication before approving this product.'
         })
       }
     }

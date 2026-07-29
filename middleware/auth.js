@@ -1,6 +1,7 @@
 const jwt = require('jsonwebtoken')
 const User = require('../models/user')
 const { ACCESS_COOKIE } = require('../utils/authSession')
+const { getMarketplaceConfig } = require('../services/marketplaceService')
 
 // Protect any route - must be logged in
 const protect = async (req, res, next) => {
@@ -74,6 +75,18 @@ const verifiedSeller = (req, res, next) => {
 
   if (req.user.sellerProfile?.verificationStatus !== 'verified') {
     return res.status(403).json({ message: 'Your seller profile must be verified before submitting products.' })
+  }
+
+  const marketplace = getMarketplaceConfig()
+  if (
+    marketplace.sellerActivationRequired
+    && !['paid', 'waived'].includes(req.user.sellerProfile?.activationStatus)
+  ) {
+    return res.status(403).json({ message: 'Pay the seller activation fee before submitting products.' })
+  }
+
+  if (req.user.sellerProfile?.payoutStatus !== 'active') {
+    return res.status(403).json({ message: 'Complete secure payout onboarding before submitting products.' })
   }
 
   if (!req.user.twoFactor?.enabled) {

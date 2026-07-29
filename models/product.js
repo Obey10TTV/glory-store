@@ -47,6 +47,13 @@ const productSchema = new mongoose.Schema({
   numReviews: { type: Number, default: 0 },
   reviews: [reviewSchema],
   seller: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+  acceptedPaymentMethods: {
+    type: [{
+      type: String,
+      enum: ['card', 'bank_transfer', 'crypto']
+    }],
+    default: []
+  },
   approvalStatus: {
     type: String,
     enum: ['pending', 'approved', 'rejected'],
