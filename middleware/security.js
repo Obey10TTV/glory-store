@@ -66,6 +66,32 @@ const paymentLimiter = rateLimit({
   message: { message: 'Too many payment attempts, please try again later.' }
 })
 
+// Marketplace conversations are useful, but must not become a spam channel.
+const conversationLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 40,
+  message: { message: 'Too many messages, please try again later.' },
+  standardHeaders: true,
+  legacyHeaders: false
+})
+
+// Reports are intentionally rate-limited to reduce abuse of the moderation queue.
+const reportLimiter = rateLimit({
+  windowMs: 24 * 60 * 60 * 1000,
+  max: 10,
+  message: { message: 'Too many reports, please try again tomorrow.' },
+  standardHeaders: true,
+  legacyHeaders: false
+})
+
+const moderationLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 120,
+  message: { message: 'Too many moderation actions, please try again shortly.' },
+  standardHeaders: true,
+  legacyHeaders: false
+})
+
 // ── 2. XSS PROTECTION ──
 const sanitizeValue = (value) => {
   if (typeof value === 'string') {
@@ -362,6 +388,72 @@ const validateProduct = [
     .optional()
     .isInt({ min: 0, max: 1000 })
     .withMessage('Low-stock threshold must be between 0 and 1000'),
+  body('listingEvidence')
+    .isObject()
+    .withMessage('Listing evidence is required before review'),
+  body('listingEvidence.condition')
+    .isIn(['new_sealed', 'new_unsealed', 'sample'])
+    .withMessage('Choose a valid product condition'),
+  body('listingEvidence.batchCode')
+    .trim()
+    .matches(/^[A-Za-z0-9/ -]{2,80}$/)
+    .withMessage('Enter the batch or lot code from the product packaging'),
+  body('listingEvidence.responsiblePersonName')
+    .trim()
+    .isLength({ min: 2, max: 160 })
+    .withMessage('Enter the Responsible Person or brand named on the packaging'),
+  body('listingEvidence.packagingPhotosConfirmed')
+    .custom(value => value === true || value === 'true')
+    .withMessage('Confirm that your product photos show the packaging and label'),
+  body('listingEvidence.declarationAccepted')
+    .custom(value => value === true || value === 'true')
+    .withMessage('Confirm that your listing is accurate and compliant'),
+]
+
+const validateConversationStart = [
+  body('listingId')
+    .isMongoId()
+    .withMessage('Choose a valid listing'),
+  body('message')
+    .trim()
+    .isLength({ min: 10, max: 1200 })
+    .withMessage('Messages must be between 10 and 1200 characters'),
+]
+
+const validateConversationMessage = [
+  body('message')
+    .trim()
+    .isLength({ min: 1, max: 1200 })
+    .withMessage('Messages must be between 1 and 1200 characters'),
+]
+
+const validateListingReport = [
+  body('reason')
+    .isIn(['counterfeit', 'unsafe_product', 'misleading_listing', 'suspected_scam', 'prohibited_item', 'stolen_content', 'other'])
+    .withMessage('Choose a valid report reason'),
+  body('detail')
+    .optional({ checkFalsy: true })
+    .trim()
+    .isLength({ min: 10, max: 1200 })
+    .withMessage('Report details must be between 10 and 1200 characters'),
+  body('detail').custom((value, { req }) => (
+    req.body.reason !== 'other' || String(value || '').trim().length >= 10
+  )).withMessage('Please add enough detail for an "Other" report'),
+]
+
+const validateReportReview = [
+  body('status')
+    .isIn(['received', 'in_review', 'actioned', 'dismissed'])
+    .withMessage('Choose a valid report status'),
+  body('adminNote')
+    .optional({ checkFalsy: true })
+    .trim()
+    .isLength({ max: 1200 })
+    .withMessage('Admin notes must be 1200 characters or less'),
+  body('listingAction')
+    .optional({ checkFalsy: true })
+    .isIn(['none', 'pause', 'remove'])
+    .withMessage('Choose a valid listing action'),
 ]
 
 const validateOrder = [
@@ -518,6 +610,9 @@ module.exports = {
   otpLimiter,
   uploadLimiter,
   paymentLimiter,
+  conversationLimiter,
+  reportLimiter,
+  moderationLimiter,
   sanitizeInput,
   ipProtection,
   validateRegister,
@@ -530,6 +625,10 @@ module.exports = {
   validateOtpOnly,
   validateSecondFactor,
   validateProduct,
+  validateConversationStart,
+  validateConversationMessage,
+  validateListingReport,
+  validateReportReview,
   validateSellerProfile,
   validateOrder,
   isUnitedKingdom,

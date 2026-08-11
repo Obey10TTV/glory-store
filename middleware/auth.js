@@ -59,7 +59,7 @@ const seller = (req, res, next) => {
   }
 }
 
-// Product submissions are limited to sellers who completed the full trust flow.
+// Listing submissions are limited to sellers who completed the trust flow.
 const verifiedSeller = (req, res, next) => {
   if (req.user?.isAdmin) {
     return next()
@@ -70,11 +70,11 @@ const verifiedSeller = (req, res, next) => {
   }
 
   if (req.user.isEmailVerified === false) {
-    return res.status(403).json({ message: 'Verify your email before managing products.' })
+    return res.status(403).json({ message: 'Verify your email before managing listings.' })
   }
 
   if (req.user.sellerProfile?.verificationStatus !== 'verified') {
-    return res.status(403).json({ message: 'Your seller profile must be verified before submitting products.' })
+    return res.status(403).json({ message: 'Your seller profile must be verified before submitting listings.' })
   }
 
   const marketplace = getMarketplaceConfig()
@@ -82,15 +82,11 @@ const verifiedSeller = (req, res, next) => {
     marketplace.sellerActivationRequired
     && !['paid', 'waived'].includes(req.user.sellerProfile?.activationStatus)
   ) {
-    return res.status(403).json({ message: 'Pay the seller activation fee before submitting products.' })
-  }
-
-  if (req.user.sellerProfile?.payoutStatus !== 'active') {
-    return res.status(403).json({ message: 'Complete secure payout onboarding before submitting products.' })
+    return res.status(403).json({ message: 'Pay the seller activation fee before submitting listings.' })
   }
 
   if (!req.user.twoFactor?.enabled) {
-    return res.status(403).json({ message: 'Enable two-factor authentication before managing products.' })
+    return res.status(403).json({ message: 'Enable two-factor authentication before managing listings.' })
   }
 
   return next()

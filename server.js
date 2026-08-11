@@ -18,6 +18,8 @@ const stripeRoutes = require('./routes/stripeRoutes')
 const reviewRoutes = require('./routes/reviewRoutes')
 const uploadRoutes = require('./routes/uploadRoutes')
 const adminRoutes = require('./routes/adminRoutes')
+const conversationRoutes = require('./routes/conversationRoutes')
+const reportRoutes = require('./routes/reportRoutes')
 
 const {
   generalLimiter,
@@ -43,13 +45,7 @@ const fallbackAllowedOrigins = [
   'http://localhost:3001',
   'http://127.0.0.1:3000',
   'http://127.0.0.1:3001',
-  'https://glory-frontend-gray.vercel.app',
-  'https://glory-uk.vercel.app',
-  'https://glory-ca.vercel.app',
-  'https://glory-ca-obioma-ajoku-s-projects.vercel.app',
-  'https://glory-ca-obey10ttv-obioma-ajoku-s-projects.vercel.app',
-  'https://gloryca.com',
-  'https://www.gloryca.com'
+  'https://glory-ca.vercel.app'
 ]
 
 const configuredOrigins = [
@@ -184,6 +180,8 @@ app.use('/api/stripe', paymentLimiter, stripeRoutes)
 app.use('/api/reviews', reviewRoutes)
 app.use('/api/upload', uploadLimiter, uploadRoutes)
 app.use('/api/admin', adminRoutes)
+app.use('/api/conversations', conversationRoutes)
+app.use('/api/reports', reportRoutes)
 
 app.get('/api/health', (req, res) => {
   const databaseConnected = mongoose.connection.readyState === 1

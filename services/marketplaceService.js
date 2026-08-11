@@ -8,8 +8,11 @@ const readInteger = (value, fallback, { min = 0, max = Number.MAX_SAFE_INTEGER }
 
 const getMarketplaceConfig = () => {
   const cardEnabled = Boolean(process.env.STRIPE_SECRET_KEY)
+  const directCheckoutEnabled = process.env.GLORY_DIRECT_CHECKOUT === 'true'
 
   return {
+    marketplaceMode: directCheckoutEnabled ? 'checkout' : 'classified',
+    directCheckoutEnabled,
     currency: 'GBP',
     sellerActivationRequired: process.env.SELLER_ACTIVATION_REQUIRED !== 'false',
     sellerActivationFeePence: readInteger(

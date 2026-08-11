@@ -12,6 +12,17 @@ const canManageProduct = (product, user) => {
   return user.isAdmin || sellerId?.toString() === user._id.toString()
 }
 
+const prepareListingEvidence = (evidence = {}, { reviewed = false } = {}) => ({
+  status: reviewed ? 'reviewed' : 'submitted',
+  condition: evidence.condition,
+  packagingPhotosConfirmed: evidence.packagingPhotosConfirmed === true || evidence.packagingPhotosConfirmed === 'true',
+  batchCode: String(evidence.batchCode || '').trim(),
+  responsiblePersonName: String(evidence.responsiblePersonName || '').trim(),
+  declarationAccepted: evidence.declarationAccepted === true || evidence.declarationAccepted === 'true',
+  submittedAt: new Date(),
+  reviewedAt: reviewed ? new Date() : undefined
+})
+
 // GET ALL PRODUCTS - Public
 router.get('/', async (req, res) => {
   try {
@@ -74,6 +85,7 @@ router.get('/mine', protect, seller, async (req, res) => {
     const products = await Product.find(query)
       .populate('seller', 'name email sellerProfile')
       .sort({ createdAt: -1 })
+      .lean()
     res.json(products)
   } catch (error) {
     res.status(500).json({ message: error.message })
@@ -99,7 +111,7 @@ router.post('/', protect, verifiedSeller, validateProduct, handleValidationError
     const {
       name, price, compareAtPrice, sku, size, productType, countryOfOrigin,
       barcode, description, ingredients, howToUse, keyBenefits, category,
-      image, images, variants, brand, countInStock, lowStockThreshold
+      image, images, variants, brand, countInStock, lowStockThreshold, listingEvidence
     } = req.body
     const product = await Product.create({
       name, price, compareAtPrice, sku, size, productType, countryOfOrigin,
@@ -107,6 +119,7 @@ router.post('/', protect, verifiedSeller, validateProduct, handleValidationError
       image, images, variants, brand, countInStock, lowStockThreshold,
       seller: req.user._id,
       approvalStatus: req.user.isAdmin ? 'approved' : 'pending',
+      listingEvidence: prepareListingEvidence(listingEvidence, { reviewed: req.user.isAdmin }),
       submittedAt: new Date(),
       approvedAt: req.user.isAdmin ? new Date() : undefined,
       reviewedAt: req.user.isAdmin ? new Date() : undefined,
@@ -133,7 +146,7 @@ router.put('/:id', protect, verifiedSeller, validateProduct, handleValidationErr
       'name', 'price', 'compareAtPrice', 'sku', 'size', 'productType',
       'countryOfOrigin', 'barcode', 'description', 'ingredients', 'howToUse',
       'keyBenefits', 'category', 'image', 'images', 'variants', 'brand',
-      'countInStock', 'lowStockThreshold'
+      'countInStock', 'lowStockThreshold', 'listingEvidence'
     ]
     allowedFields.forEach((field) => {
       if (Object.prototype.hasOwnProperty.call(req.body, field)) {
@@ -147,6 +160,9 @@ router.put('/:id', protect, verifiedSeller, validateProduct, handleValidationErr
       product.submittedAt = new Date()
       product.approvedAt = undefined
       product.reviewedAt = undefined
+      product.listingEvidence = prepareListingEvidence(req.body.listingEvidence)
+    } else if (Object.prototype.hasOwnProperty.call(req.body, 'listingEvidence')) {
+      product.listingEvidence = prepareListingEvidence(req.body.listingEvidence, { reviewed: true })
     }
 
     const updatedProduct = await product.save()

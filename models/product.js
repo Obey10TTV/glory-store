@@ -15,6 +15,26 @@ const variantSchema = new mongoose.Schema({
   image: { type: String, trim: true, default: '' }
 })
 
+const listingEvidenceSchema = new mongoose.Schema({
+  status: {
+    type: String,
+    enum: ['not_submitted', 'submitted', 'reviewed', 'needs_more_information', 'rejected'],
+    default: 'not_submitted',
+    index: true
+  },
+  condition: {
+    type: String,
+    enum: ['new_sealed', 'new_unsealed', 'sample'],
+    default: 'new_sealed'
+  },
+  packagingPhotosConfirmed: { type: Boolean, default: false },
+  batchCode: { type: String, trim: true, maxlength: 80, default: '' },
+  responsiblePersonName: { type: String, trim: true, maxlength: 160, default: '' },
+  declarationAccepted: { type: Boolean, default: false },
+  submittedAt: Date,
+  reviewedAt: Date
+}, { _id: false })
+
 const productSchema = new mongoose.Schema({
   name: { type: String, required: true },
   price: { type: Number, required: true },
@@ -63,12 +83,25 @@ const productSchema = new mongoose.Schema({
   rejectionReason: { type: String, default: '' },
   submittedAt: Date,
   approvedAt: Date,
-  reviewedAt: Date
+  reviewedAt: Date,
+  listingEvidence: { type: listingEvidenceSchema, default: () => ({}) }
 }, { timestamps: true })
 
 productSchema.index({ name: 'text', brand: 'text', description: 'text', category: 'text' })
 productSchema.index({ approvalStatus: 1, category: 1, brand: 1, price: 1, createdAt: -1 })
 productSchema.index({ seller: 1, countInStock: 1 })
+
+productSchema.set('toJSON', {
+  transform: (doc, ret) => {
+    if (ret.listingEvidence) {
+      delete ret.listingEvidence.batchCode
+      delete ret.listingEvidence.responsiblePersonName
+      delete ret.listingEvidence.packagingPhotosConfirmed
+      delete ret.listingEvidence.declarationAccepted
+    }
+    return ret
+  }
+})
 
 productSchema.pre('validate', function(next) {
   if (this.variants?.length) {

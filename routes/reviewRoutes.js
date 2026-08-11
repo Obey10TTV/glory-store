@@ -3,10 +3,20 @@ const router = express.Router()
 const Product = require('../models/product')
 const Order = require('../models/order')
 const { protect } = require('../middleware/auth')
+const { getMarketplaceConfig } = require('../services/marketplaceService')
+
+const requireCompletedSaleFeedback = (req, res, next) => {
+  if (!getMarketplaceConfig().directCheckoutEnabled) {
+    return res.status(410).json({
+      message: 'Listing reviews are unavailable until Glory has a verified completed-sale feedback flow.'
+    })
+  }
+  next()
+}
 
 
 // ADD REVIEW - POST /api/reviews/:productId
-router.post('/:productId', protect, async (req, res) => {
+router.post('/:productId', protect, requireCompletedSaleFeedback, async (req, res) => {
   try {
     const rating = Number(req.body.rating)
     const comment = String(req.body.comment || '').trim()

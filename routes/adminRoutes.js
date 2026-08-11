@@ -8,8 +8,8 @@ const AuditLog = require('../models/auditLog')
 const cloudinary = require('cloudinary').v2
 const { protect, admin } = require('../middleware/auth')
 const { aggregateOrderStatus, recordConfirmedRefund, releaseOrderInventory } = require('../services/orderService')
-const { sendOrderStatusEmail } = require('../utils/email')
 const { getMarketplaceConfig } = require('../services/marketplaceService')
+const { sendOrderStatusEmail } = require('../utils/email')
 const { recordAudit } = require('../utils/audit')
 
 cloudinary.config({
@@ -17,6 +17,15 @@ cloudinary.config({
   api_key: process.env.CLOUDINARY_API_KEY,
   api_secret: process.env.CLOUDINARY_API_SECRET
 })
+
+const hasListingEvidence = (product) => {
+  const evidence = product.listingEvidence || {}
+  return evidence.status === 'submitted'
+    && Boolean(evidence.packagingPhotosConfirmed)
+    && Boolean(evidence.declarationAccepted)
+    && String(evidence.batchCode || '').trim().length >= 2
+    && String(evidence.responsiblePersonName || '').trim().length >= 2
+}
 
 
 // GET ALL USERS - GET /api/admin/users
@@ -184,6 +193,7 @@ router.get('/products', protect, admin, async (req, res) => {
     const products = await Product.find({})
       .populate('seller', 'name email sellerProfile')
       .sort({ createdAt: -1 })
+      .lean()
     res.json(products)
   } catch (error) {
     res.status(500).json({ message: error.message })
@@ -210,24 +220,27 @@ router.put('/products/:id/status', protect, admin, async (req, res) => {
     }
 
     if (approvalStatus === 'approved') {
-      const productSeller = await User.findById(product.seller).select(
-        'isAdmin isSeller isEmailVerified twoFactor.enabled sellerProfile.verificationStatus sellerProfile.activationStatus sellerProfile.payoutStatus'
-      )
       const marketplace = getMarketplaceConfig()
+      const productSeller = await User.findById(product.seller).select(
+        'isAdmin isSeller isEmailVerified twoFactor.enabled sellerProfile.verificationStatus sellerProfile.activationStatus'
+      )
       const sellerCanPublish = productSeller?.isAdmin || (productSeller
         && productSeller.isSeller
         && productSeller.isEmailVerified !== false
         && productSeller.twoFactor?.enabled
         && productSeller.sellerProfile?.verificationStatus === 'verified'
-        && (
-          !marketplace.sellerActivationRequired
-          || ['paid', 'waived'].includes(productSeller.sellerProfile?.activationStatus)
-        )
-        && productSeller.sellerProfile?.payoutStatus === 'active')
+        && (!marketplace.sellerActivationRequired
+          || ['paid', 'waived'].includes(productSeller.sellerProfile?.activationStatus)))
 
       if (!sellerCanPublish) {
         return res.status(400).json({
-          message: 'Verify the seller, activation fee, payout account, email and two-factor authentication before approving this product.'
+          message: 'Verify the seller, activation fee, email and two-factor authentication before approving this listing.'
+        })
+      }
+
+      if (!productSeller?.isAdmin && !hasListingEvidence(product)) {
+        return res.status(400).json({
+          message: 'Review the listing evidence, packaging photos and seller declaration before approving this listing.'
         })
       }
     }
@@ -236,6 +249,14 @@ router.put('/products/:id/status', protect, admin, async (req, res) => {
     product.reviewedAt = new Date()
     product.rejectionReason = approvalStatus === 'rejected' ? rejectionReason : ''
     product.approvedAt = approvalStatus === 'approved' ? new Date() : undefined
+    product.listingEvidence = product.listingEvidence || {}
+    if (approvalStatus === 'approved') {
+      product.listingEvidence.status = 'reviewed'
+      product.listingEvidence.reviewedAt = new Date()
+    } else if (approvalStatus === 'rejected') {
+      product.listingEvidence.status = 'rejected'
+      product.listingEvidence.reviewedAt = new Date()
+    }
 
     const updatedProduct = await product.save()
     await recordAudit(req, {

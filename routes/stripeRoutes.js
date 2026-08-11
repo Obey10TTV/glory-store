@@ -23,11 +23,19 @@ const configuredClientOrigins = [
 ].filter(Boolean)
 
 const getClientOrigin = () => configuredClientOrigins[0]
-  || (process.env.NODE_ENV === 'production' ? 'https://glory-uk.vercel.app' : 'http://localhost:3000')
+  || (process.env.NODE_ENV === 'production' ? 'https://glory-ca.vercel.app' : 'http://localhost:3000')
 
 const canAccessOrder = (order, user) => {
   const buyerId = order.buyer?._id || order.buyer
   return user.isAdmin || buyerId?.toString() === user._id.toString()
+}
+
+const directCheckoutUnavailable = (res) => {
+  if (getMarketplaceConfig().directCheckoutEnabled) return false
+  res.status(410).json({
+    message: 'Glory does not process buyer-to-seller payments. Use the secure conversation flow to contact the seller.'
+  })
+  return true
 }
 
 const applySellerActivationSession = async (session) => {
@@ -104,6 +112,8 @@ router.get('/status', (req, res) => {
     sellerActivationRequired: marketplace.sellerActivationRequired,
     sellerActivationFeePence: marketplace.sellerActivationFeePence,
     platformCommissionBps: marketplace.platformCommissionBps,
+    marketplaceMode: marketplace.marketplaceMode,
+    directCheckoutEnabled: marketplace.directCheckoutEnabled,
     paymentMethods: marketplace.paymentMethods
   })
 })
@@ -231,6 +241,7 @@ router.get('/seller/activation/verify/:sessionId', protect, async (req, res) => 
 
 router.post('/connect/onboard', protect, async (req, res) => {
   try {
+    if (directCheckoutUnavailable(res)) return
     if (!stripe) return res.status(503).json({ message: 'Seller payouts are not configured yet' })
 
     const marketplace = getMarketplaceConfig()
@@ -284,6 +295,7 @@ router.post('/connect/onboard', protect, async (req, res) => {
 
 router.post('/initialize', protect, async (req, res) => {
   try {
+    if (directCheckoutUnavailable(res)) return
     if (!stripe) {
       return res.status(503).json({ message: 'UK card payments are not configured yet' })
     }
@@ -345,6 +357,7 @@ router.post('/initialize', protect, async (req, res) => {
 
 router.get('/verify/:sessionId', protect, async (req, res) => {
   try {
+    if (directCheckoutUnavailable(res)) return
     if (!stripe) {
       return res.status(503).json({ message: 'UK card payments are not configured yet' })
     }
@@ -385,7 +398,7 @@ const handleWebhook = async (req, res) => {
       const session = event.data.object
       if (session.metadata?.purpose === 'seller_activation') {
         await applySellerActivationSession(session)
-      } else {
+      } else if (getMarketplaceConfig().directCheckoutEnabled) {
         await applyVerifiedOrderSession(session)
       }
     }

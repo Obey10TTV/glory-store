@@ -69,7 +69,16 @@ const handleError = (res, error) => {
   })
 }
 
-router.post('/checkout-options', protect, paymentLimiter, async (req, res) => {
+const requireDirectCheckout = (req, res, next) => {
+  if (!getMarketplaceConfig().directCheckoutEnabled) {
+    return res.status(410).json({
+      message: 'Glory does not process buyer-to-seller payments. Contact the seller through Glory to arrange a safe transaction.'
+    })
+  }
+  next()
+}
+
+router.post('/checkout-options', protect, requireDirectCheckout, paymentLimiter, async (req, res) => {
   try {
     const country = String(req.body?.shippingAddress?.country || 'United Kingdom')
       .trim()
@@ -82,7 +91,7 @@ router.post('/checkout-options', protect, paymentLimiter, async (req, res) => {
 })
 
 // CREATE ORDER WITH ATOMIC STOCK RESERVATION
-router.post('/', protect, validateOrder, handleValidationErrors, async (req, res) => {
+router.post('/', protect, requireDirectCheckout, validateOrder, handleValidationErrors, async (req, res) => {
   const idempotencyKey = String(req.get('idempotency-key') || '').trim()
   if (!/^[A-Za-z0-9_-]{16,128}$/.test(idempotencyKey)) {
     return res.status(400).json({ message: 'A valid idempotency key is required' })
@@ -333,7 +342,7 @@ router.get('/:id', protect, async (req, res) => {
   }
 })
 
-router.put('/:id/pay', protect, admin, async (req, res) => {
+router.put('/:id/pay', protect, admin, requireDirectCheckout, async (req, res) => {
   try {
     const order = await Order.findById(req.params.id)
     if (!order) return res.status(404).json({ message: 'Order not found' })

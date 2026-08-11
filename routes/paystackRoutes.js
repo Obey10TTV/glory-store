@@ -5,6 +5,7 @@ const router = express.Router()
 const { protect } = require('../middleware/auth')
 const Order = require('../models/order')
 const { markOrderPaid } = require('../services/orderService')
+const { getMarketplaceConfig } = require('../services/marketplaceService')
 const { sendOrderStatusEmail } = require('../utils/email')
 const { logger } = require('../middleware/logger')
 
@@ -53,6 +54,14 @@ const canAccessOrder = (order, user) => {
   return user.isAdmin || buyerId?.toString() === user._id.toString()
 }
 
+const directCheckoutUnavailable = (res) => {
+  if (getMarketplaceConfig().directCheckoutEnabled) return false
+  res.status(410).json({
+    message: 'Glory does not process buyer-to-seller payments. Use the secure conversation flow to contact the seller.'
+  })
+  return true
+}
+
 const applyVerifiedPayment = async (paymentData) => {
   if (paymentData?.status !== 'success') return null
   const orderId = paymentData.metadata?.orderId
@@ -83,6 +92,7 @@ const applyVerifiedPayment = async (paymentData) => {
 
 router.post('/initialize', protect, async (req, res) => {
   try {
+    if (directCheckoutUnavailable(res)) return
     if (!process.env.PAYSTACK_SECRET_KEY) {
       return res.status(503).json({ message: 'Payment provider is not configured' })
     }
@@ -122,6 +132,7 @@ router.post('/initialize', protect, async (req, res) => {
 
 router.get('/verify/:reference', protect, async (req, res) => {
   try {
+    if (directCheckoutUnavailable(res)) return
     if (!process.env.PAYSTACK_SECRET_KEY) {
       return res.status(503).json({ message: 'Payment provider is not configured' })
     }
@@ -150,7 +161,7 @@ const handleWebhook = async (req, res) => {
       return res.status(401).send('Invalid signature')
     }
     const event = JSON.parse(req.body.toString('utf8'))
-    if (event.event === 'charge.success') {
+    if (event.event === 'charge.success' && getMarketplaceConfig().directCheckoutEnabled) {
       await applyVerifiedPayment(event.data)
     }
     res.sendStatus(200)
