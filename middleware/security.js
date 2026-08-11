@@ -456,6 +456,16 @@ const validateReportReview = [
     .withMessage('Choose a valid listing action'),
 ]
 
+const validatePromotionCheckout = [
+  body('listingId')
+    .isMongoId()
+    .withMessage('Choose a valid approved listing'),
+  body('planCode')
+    .trim()
+    .matches(/^[a-z0-9_]{3,60}$/)
+    .withMessage('Choose a valid promotion plan'),
+]
+
 const validateOrder = [
   body('orderItems')
     .isArray({ min: 1 })
@@ -629,6 +639,7 @@ module.exports = {
   validateConversationMessage,
   validateListingReport,
   validateReportReview,
+  validatePromotionCheckout,
   validateSellerProfile,
   validateOrder,
   isUnitedKingdom,

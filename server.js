@@ -20,6 +20,7 @@ const uploadRoutes = require('./routes/uploadRoutes')
 const adminRoutes = require('./routes/adminRoutes')
 const conversationRoutes = require('./routes/conversationRoutes')
 const reportRoutes = require('./routes/reportRoutes')
+const promotionRoutes = require('./routes/promotionRoutes')
 
 const {
   generalLimiter,
@@ -182,6 +183,7 @@ app.use('/api/upload', uploadLimiter, uploadRoutes)
 app.use('/api/admin', adminRoutes)
 app.use('/api/conversations', conversationRoutes)
 app.use('/api/reports', reportRoutes)
+app.use('/api/promotions', promotionRoutes)
 
 app.get('/api/health', (req, res) => {
   const databaseConnected = mongoose.connection.readyState === 1

@@ -1,11 +1,15 @@
 const express = require('express')
 const Stripe = require('stripe')
 const router = express.Router()
-const { protect } = require('../middleware/auth')
+const { protect, seller, verifiedSeller } = require('../middleware/auth')
 const Order = require('../models/order')
 const User = require('../models/user')
+const Product = require('../models/product')
+const Promotion = require('../models/promotion')
+const AuditLog = require('../models/auditLog')
 const { markOrderPaid } = require('../services/orderService')
-const { getMarketplaceConfig } = require('../services/marketplaceService')
+const { getMarketplaceConfig, getPromotionPlan } = require('../services/marketplaceService')
+const { validatePromotionCheckout, handleValidationErrors } = require('../middleware/security')
 const {
   getSellerCommerceStatus,
   transferOrderAllocations,
@@ -66,6 +70,64 @@ const applySellerActivationSession = async (session) => {
   user.sellerProfile.activationPaidAt = user.sellerProfile.activationPaidAt || new Date()
   await user.save()
   return user
+}
+
+const applyHomepagePromotionSession = async (session) => {
+  if (session?.payment_status !== 'paid' || session.metadata?.purpose !== 'homepage_promotion') {
+    return null
+  }
+
+  const promotionId = session.metadata?.promotionId
+  const userId = session.metadata?.userId
+  if (!promotionId || !userId) {
+    throw Object.assign(new Error('Promotion payment metadata is incomplete'), { statusCode: 400 })
+  }
+
+  const promotion = await Promotion.findById(promotionId).select('+paymentReference +paymentIntentId')
+  if (!promotion || String(promotion.seller) !== String(userId)) {
+    throw Object.assign(new Error('Promotion not found'), { statusCode: 404 })
+  }
+  if (promotion.status === 'active') return promotion
+
+  if (
+    session.currency !== String(promotion.currency).toLowerCase()
+    || Number(session.amount_total) !== Number(promotion.amountPence)
+    || session.metadata?.planCode !== promotion.planCode
+  ) {
+    throw Object.assign(new Error('Promotion payment amount or plan does not match'), { statusCode: 400 })
+  }
+
+  const listing = await Product.findById(promotion.listing)
+  if (
+    !listing
+    || String(listing.seller) !== String(promotion.seller)
+    || listing.approvalStatus !== 'approved'
+    || Number(listing.countInStock) <= 0
+  ) {
+    promotion.status = 'failed'
+    promotion.failureReason = 'The listing was no longer eligible for homepage placement after payment.'
+    await promotion.save()
+    return promotion
+  }
+
+  const now = new Date()
+  promotion.status = 'active'
+  promotion.paymentReference = session.id
+  promotion.paymentIntentId = String(session.payment_intent || '')
+  promotion.activatedAt = now
+  promotion.startsAt = now
+  promotion.endsAt = new Date(now.getTime() + (promotion.durationDays * 24 * 60 * 60 * 1000))
+  promotion.failureReason = ''
+  await promotion.save()
+
+  await AuditLog.create({
+    actor: promotion.seller,
+    action: 'homepage_promotion_activated',
+    entityType: 'promotion',
+    entityId: promotion._id.toString(),
+    summary: `Homepage promotion activated for listing ${listing._id}`
+  })
+  return promotion
 }
 
 const applyVerifiedOrderSession = async (session) => {
@@ -239,6 +301,148 @@ router.get('/seller/activation/verify/:sessionId', protect, async (req, res) => 
   }
 })
 
+router.post('/seller/promotions/homepage', protect, verifiedSeller, validatePromotionCheckout, handleValidationErrors, async (req, res) => {
+  let promotion
+  try {
+    if (!stripe) return res.status(503).json({ message: 'Promotion payments are not configured yet' })
+
+    const plan = getPromotionPlan(req.body.planCode)
+    if (!plan || plan.placement !== 'homepage_featured') {
+      return res.status(400).json({ message: 'That promotion plan is unavailable.' })
+    }
+
+    const listing = await Product.findOne({
+      _id: req.body.listingId,
+      seller: req.user._id,
+      approvalStatus: 'approved',
+      countInStock: { $gt: 0 }
+    })
+    if (!listing) {
+      return res.status(404).json({ message: 'Choose one of your approved, in-stock listings to promote.' })
+    }
+
+    const now = new Date()
+    const existing = await Promotion.findOne({
+      seller: req.user._id,
+      listing: listing._id,
+      placement: plan.placement,
+      status: { $in: ['pending_payment', 'active'] }
+    }).select('+paymentReference')
+
+    if (existing?.status === 'active' && existing.endsAt > now) {
+      return res.json({ alreadyActive: true, promotion: existing })
+    }
+    if (existing?.status === 'active') {
+      existing.status = 'expired'
+      await existing.save()
+    }
+    if (existing?.status === 'pending_payment' && existing.paymentReference) {
+      const pendingSession = await stripe.checkout.sessions.retrieve(existing.paymentReference)
+      if (pendingSession.payment_status === 'paid') {
+        const activePromotion = await applyHomepagePromotionSession(pendingSession)
+        return res.json({ alreadyActive: activePromotion?.status === 'active', promotion: activePromotion })
+      }
+      if (pendingSession.status === 'open' && pendingSession.url) {
+        return res.json({ url: pendingSession.url, sessionId: pendingSession.id, promotion: existing })
+      }
+      existing.status = 'failed'
+      existing.failureReason = 'The previous promotion payment session expired.'
+      await existing.save()
+    }
+
+    promotion = await Promotion.create({
+      seller: req.user._id,
+      listing: listing._id,
+      placement: plan.placement,
+      planCode: plan.code,
+      label: plan.label,
+      amountPence: plan.feePence,
+      currency: plan.currency,
+      durationDays: plan.durationDays,
+      status: 'pending_payment'
+    })
+
+    const session = await stripe.checkout.sessions.create({
+      mode: 'payment',
+      customer_email: req.user.email,
+      line_items: [{
+        price_data: {
+          currency: String(plan.currency).toLowerCase(),
+          unit_amount: plan.feePence,
+          product_data: {
+            name: `Glory ${plan.label}`,
+            description: `Sponsored home-page placement for ${listing.name}`
+          }
+        },
+        quantity: 1
+      }],
+      metadata: {
+        purpose: 'homepage_promotion',
+        promotionId: promotion._id.toString(),
+        userId: req.user._id.toString(),
+        planCode: plan.code
+      },
+      payment_intent_data: {
+        metadata: {
+          purpose: 'homepage_promotion',
+          promotionId: promotion._id.toString(),
+          userId: req.user._id.toString(),
+          planCode: plan.code
+        }
+      },
+      success_url: `${getClientOrigin()}/seller?promotion=success&session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${getClientOrigin()}/seller?promotion=cancelled`,
+      expires_at: Math.floor(Date.now() / 1000) + (30 * 60)
+    }, {
+      idempotencyKey: `glory-homepage-promotion-${promotion._id}`
+    })
+
+    promotion.paymentReference = session.id
+    await promotion.save()
+    await AuditLog.create({
+      actor: req.user._id,
+      action: 'homepage_promotion_checkout_started',
+      entityType: 'promotion',
+      entityId: promotion._id.toString(),
+      summary: `Homepage promotion checkout started for listing ${listing._id}`,
+      requestId: req.requestId || ''
+    })
+    res.json({ url: session.url, sessionId: session.id })
+  } catch (error) {
+    if (promotion && promotion.status === 'pending_payment') {
+      promotion.status = 'failed'
+      promotion.failureReason = 'The promotion payment session could not be created.'
+      await promotion.save().catch(() => undefined)
+    }
+    res.status(error.statusCode || 500).json({
+      message: error.statusCode ? error.message : 'Promotion payment could not be started'
+    })
+  }
+})
+
+router.get('/seller/promotions/homepage/verify/:sessionId', protect, seller, async (req, res) => {
+  try {
+    if (!stripe) return res.status(503).json({ message: 'Promotion payments are not configured yet' })
+    const session = await stripe.checkout.sessions.retrieve(req.params.sessionId)
+    if (
+      session.metadata?.purpose !== 'homepage_promotion'
+      || String(session.metadata?.userId) !== String(req.user._id)
+    ) {
+      return res.status(403).json({ message: 'Not authorized to verify this promotion payment' })
+    }
+    const promotion = await applyHomepagePromotionSession(session)
+    res.json({
+      paymentStatus: session.payment_status,
+      promotionStatus: promotion?.status || 'pending',
+      promotion
+    })
+  } catch (error) {
+    res.status(error.statusCode || 500).json({
+      message: error.statusCode ? error.message : 'Promotion payment verification failed'
+    })
+  }
+})
+
 router.post('/connect/onboard', protect, async (req, res) => {
   try {
     if (directCheckoutUnavailable(res)) return
@@ -398,6 +602,8 @@ const handleWebhook = async (req, res) => {
       const session = event.data.object
       if (session.metadata?.purpose === 'seller_activation') {
         await applySellerActivationSession(session)
+      } else if (session.metadata?.purpose === 'homepage_promotion') {
+        await applyHomepagePromotionSession(session)
       } else if (getMarketplaceConfig().directCheckoutEnabled) {
         await applyVerifiedOrderSession(session)
       }
@@ -419,5 +625,6 @@ const handleWebhook = async (req, res) => {
 router.handleWebhook = handleWebhook
 router.applyVerifiedSession = applyVerifiedOrderSession
 router.applySellerActivationSession = applySellerActivationSession
+router.applyHomepagePromotionSession = applyHomepagePromotionSession
 
 module.exports = router

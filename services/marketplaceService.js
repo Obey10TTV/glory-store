@@ -51,6 +51,33 @@ const getMarketplaceConfig = () => {
   }
 }
 
+const getPromotionPlans = () => {
+  const marketplace = getMarketplaceConfig()
+  const durationDays = readInteger(
+    process.env.HOMEPAGE_FEATURED_DURATION_DAYS,
+    7,
+    { min: 1, max: 31 }
+  )
+
+  return [{
+    code: 'homepage_featured',
+    placement: 'homepage_featured',
+    label: 'Homepage featured placement',
+    description: `One approved listing in Glory's clearly labelled Sponsored home-page edit for ${durationDays} days.`,
+    feePence: readInteger(
+      process.env.HOMEPAGE_FEATURED_FEE_PENCE,
+      999,
+      { min: 100, max: 100000 }
+    ),
+    currency: marketplace.currency,
+    durationDays
+  }]
+}
+
+const getPromotionPlan = (code) => (
+  getPromotionPlans().find((plan) => plan.code === String(code || '').trim()) || null
+)
+
 const normalizePaymentMethods = (methods, fallback = ['card']) => {
   if (!Array.isArray(methods)) return [...fallback]
   const unique = [...new Set(methods.map(method => String(method).trim().toLowerCase()))]
@@ -66,6 +93,8 @@ const orderValueToMethodCode = (value) => {
 module.exports = {
   KNOWN_PAYMENT_METHODS,
   getMarketplaceConfig,
+  getPromotionPlans,
+  getPromotionPlan,
   normalizePaymentMethods,
   orderValueToMethodCode
 }
