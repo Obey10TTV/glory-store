@@ -10,10 +10,15 @@ test('seller JSON never exposes payout, activation or private document storage r
     isSeller: true,
     sellerProfile: {
       storeName: 'Private Beauty',
+      brandName: 'Private Beauty',
+      returnPolicy: 'returns_accepted',
+      returnPolicyDetail: '14-day unopened return policy',
+      responseTimeCommitment: 'within_24_hours',
       stripeAccountId: 'acct_private',
       activationPaymentReference: 'cs_private',
       documents: [{
         type: 'identity',
+        kind: 'passport',
         publicId: 'private/cloudinary/reference',
         resourceType: 'raw',
         originalName: 'identity.pdf'
@@ -28,4 +33,7 @@ test('seller JSON never exposes payout, activation or private document storage r
   assert.equal(safe.sellerProfile.documents[0].publicId, undefined)
   assert.equal(safe.sellerProfile.documents[0].resourceType, undefined)
   assert.equal(safe.sellerProfile.documents[0].originalName, 'identity.pdf')
+  assert.equal(safe.sellerProfile.documents[0].kind, 'passport')
+  assert.equal(safe.sellerProfile.brandName, 'Private Beauty')
+  assert.equal(safe.sellerProfile.returnPolicy, 'returns_accepted')
 })

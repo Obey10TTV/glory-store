@@ -4,6 +4,10 @@ const cloudinary = require('cloudinary').v2
 const multer = require('multer')
 const { protect } = require('../middleware/auth')
 const User = require('../models/user')
+const {
+  SELLER_DOCUMENT_TYPES,
+  isValidSellerDocumentKind
+} = require('../utils/sellerVerification')
 
 // Configure Cloudinary
 cloudinary.config({
@@ -85,10 +89,11 @@ router.post('/', protect, runUpload(upload.single('image')), async (req, res) =>
 router.post('/seller-document', protect, runUpload(sellerDocumentUpload.single('document')), async (req, res) => {
   try {
     const documentType = String(req.body.type || '').toLowerCase()
+    const documentKind = String(req.body.kind || '').toLowerCase()
     if (!req.user.isSeller) {
       return res.status(403).json({ message: 'Only seller accounts can upload verification documents' })
     }
-    if (!['identity', 'business', 'address'].includes(documentType)) {
+    if (!SELLER_DOCUMENT_TYPES.includes(documentType) || !isValidSellerDocumentKind(documentType, documentKind)) {
       return res.status(400).json({ message: 'Choose a valid document type' })
     }
     if (!req.file) {
@@ -115,6 +120,7 @@ router.post('/seller-document', protect, runUpload(sellerDocumentUpload.single('
         invalidate: true
       }).catch(() => {})
       existing.publicId = uploaded.public_id
+      existing.kind = documentKind
       existing.resourceType = resourceType
       existing.format = uploaded.format || (resourceType === 'raw' ? 'pdf' : '')
       existing.originalName = req.file.originalname
@@ -127,6 +133,7 @@ router.post('/seller-document', protect, runUpload(sellerDocumentUpload.single('
     } else {
       user.sellerProfile.documents.push({
         type: documentType,
+        kind: documentKind,
         publicId: uploaded.public_id,
         resourceType,
         format: uploaded.format || (resourceType === 'raw' ? 'pdf' : ''),
@@ -144,6 +151,7 @@ router.post('/seller-document', protect, runUpload(sellerDocumentUpload.single('
       document: {
         _id: savedDocument._id,
         type: savedDocument.type,
+        kind: savedDocument.kind,
         originalName: savedDocument.originalName,
         status: savedDocument.status,
         uploadedAt: savedDocument.uploadedAt

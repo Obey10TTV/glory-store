@@ -30,9 +30,10 @@ const authSessionSchema = new mongoose.Schema({
 const sellerDocumentSchema = new mongoose.Schema({
   type: {
     type: String,
-    enum: ['identity', 'business', 'address'],
+    enum: ['identity', 'business', 'tax', 'address', 'insurance'],
     required: true
   },
+  kind: { type: String, trim: true, maxlength: 64, default: '' },
   publicId: { type: String, required: true },
   resourceType: { type: String, enum: ['image', 'raw'], default: 'image' },
   format: { type: String, maxlength: 20, default: '' },
@@ -144,6 +145,12 @@ const userSchema = new mongoose.Schema({
     }
   },
   sellerProfile: {
+    brandName: {
+      type: String,
+      trim: true,
+      maxlength: 80,
+      default: ''
+    },
     storeName: {
       type: String,
       trim: true,
@@ -194,6 +201,32 @@ const userSchema = new mongoose.Schema({
       trim: true,
       maxlength: 80,
       default: ''
+    },
+    businessType: {
+      type: String,
+      enum: ['registered_business', 'sole_trader', 'independent_seller'],
+      default: 'independent_seller'
+    },
+    taxStatus: {
+      type: String,
+      enum: ['not_registered', 'registered', 'not_applicable'],
+      default: 'not_registered'
+    },
+    returnPolicy: {
+      type: String,
+      enum: ['not_specified', 'returns_accepted', 'final_sale', 'contact_seller'],
+      default: 'not_specified'
+    },
+    returnPolicyDetail: {
+      type: String,
+      trim: true,
+      maxlength: 500,
+      default: ''
+    },
+    responseTimeCommitment: {
+      type: String,
+      enum: ['not_specified', 'within_24_hours', 'within_48_hours', 'within_3_days'],
+      default: 'not_specified'
     },
     verificationStatus: {
       type: String,

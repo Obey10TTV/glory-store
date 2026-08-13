@@ -24,6 +24,10 @@ test('public product JSON never exposes private listing evidence', () => {
       condition: 'new_sealed',
       packagingPhotosConfirmed: true,
       batchCode: 'LOT-2026-GLORY',
+      expiryOrPao: '12M after opening',
+      supplierInvoiceAvailable: true,
+      supplierInvoiceReference: 'INV-PRIVATE-2026',
+      safetyDocumentationAvailable: true,
       responsiblePersonName: 'Glow Lab UK Ltd',
       declarationAccepted: true
     }
@@ -33,6 +37,10 @@ test('public product JSON never exposes private listing evidence', () => {
   assert.equal(publicProduct.listingEvidence.status, 'submitted')
   assert.equal(publicProduct.listingEvidence.condition, 'new_sealed')
   assert.equal(publicProduct.listingEvidence.batchCode, undefined)
+  assert.equal(publicProduct.listingEvidence.expiryOrPao, undefined)
+  assert.equal(publicProduct.listingEvidence.supplierInvoiceAvailable, undefined)
+  assert.equal(publicProduct.listingEvidence.supplierInvoiceReference, undefined)
+  assert.equal(publicProduct.listingEvidence.safetyDocumentationAvailable, undefined)
   assert.equal(publicProduct.listingEvidence.responsiblePersonName, undefined)
   assert.equal(publicProduct.listingEvidence.packagingPhotosConfirmed, undefined)
   assert.equal(publicProduct.listingEvidence.declarationAccepted, undefined)

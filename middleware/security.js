@@ -2,6 +2,7 @@ const rateLimit = require('express-rate-limit')
 const hpp = require('hpp')
 const xss = require('xss')
 const { body, validationResult } = require('express-validator')
+const { isCosmeticsCategory, isValidProductType } = require('../utils/catalogTaxonomy')
 
 const isUnitedKingdom = (country = '') => (
   ['united kingdom', 'uk', 'great britain', 'gb'].includes(String(country).trim().toLowerCase())
@@ -185,6 +186,20 @@ const validateRegister = [
     .withMessage('Password must contain at least one number')
     .matches(/[^A-Za-z0-9]/)
     .withMessage('Password must contain a special character'),
+  body('isSeller')
+    .optional()
+    .isBoolean()
+    .toBoolean()
+    .withMessage('Seller selection must be true or false'),
+  body('brandName')
+    .custom((value, { req }) => {
+      if (!req.body.isSeller) return true
+      const brandName = String(value || '').trim()
+      if (brandName.length < 2 || brandName.length > 80) {
+        throw new Error('Seller brand name must be between 2 and 80 characters')
+      }
+      return true
+    }),
 ]
 
 const validateUpdateProfile = [
@@ -227,7 +242,17 @@ const validateGoogleAuth = [
   body('isSeller')
     .optional()
     .isBoolean()
+    .toBoolean()
     .withMessage('Seller selection must be true or false'),
+  body('brandName')
+    .custom((value, { req }) => {
+      if (!req.body.isSeller) return true
+      const brandName = String(value || '').trim()
+      if (brandName.length < 2 || brandName.length > 80) {
+        throw new Error('Seller brand name must be between 2 and 80 characters')
+      }
+      return true
+    }),
 ]
 
 const validateGoogleLink = [
@@ -302,7 +327,9 @@ const validateProduct = [
   body('productType')
     .trim()
     .isLength({ min: 2, max: 100 })
-    .withMessage('Product type must be between 2 and 100 characters'),
+    .withMessage('Product type must be between 2 and 100 characters')
+    .custom((value, { req }) => isValidProductType(req.body.category, value))
+    .withMessage('Choose a product type that belongs to the selected category'),
   body('countryOfOrigin')
     .trim()
     .isLength({ min: 2, max: 100 })
@@ -313,6 +340,7 @@ const validateProduct = [
     .matches(/^[A-Za-z0-9-]{4,64}$/)
     .withMessage('Barcode must contain 4 to 64 letters, numbers, or dashes'),
   body('brand')
+    .optional({ checkFalsy: true })
     .trim()
     .isLength({ min: 2, max: 80 })
     .withMessage('Brand must be between 2 and 80 characters'),
@@ -398,6 +426,24 @@ const validateProduct = [
     .trim()
     .matches(/^[A-Za-z0-9/ -]{2,80}$/)
     .withMessage('Enter the batch or lot code from the product packaging'),
+  body('listingEvidence.expiryOrPao')
+    .optional({ checkFalsy: true })
+    .trim()
+    .isLength({ min: 2, max: 80 })
+    .withMessage('Expiry or period-after-opening information must be between 2 and 80 characters'),
+  body('listingEvidence.supplierInvoiceAvailable')
+    .custom(value => value === true || value === 'true')
+    .withMessage('Confirm that you can provide a supplier invoice or proof of source if Glory asks'),
+  body('listingEvidence.supplierInvoiceReference')
+    .optional({ checkFalsy: true })
+    .trim()
+    .isLength({ max: 160 })
+    .withMessage('Supplier invoice reference must be 160 characters or less'),
+  body('listingEvidence.safetyDocumentationAvailable')
+    .custom((value, { req }) => (
+      !isCosmeticsCategory(req.body.category) || value === true || value === 'true'
+    ))
+    .withMessage('Confirm that safety or compliance information can be provided if Glory asks'),
   body('listingEvidence.responsiblePersonName')
     .trim()
     .isLength({ min: 2, max: 160 })
@@ -520,6 +566,11 @@ const validateOrder = [
 ]
 
 const validateSellerProfile = [
+  body('brandName')
+    .optional({ checkFalsy: true })
+    .trim()
+    .isLength({ min: 2, max: 80 })
+    .withMessage('Brand name must be between 2 and 80 characters'),
   body('storeName')
     .optional({ checkFalsy: true })
     .trim()
@@ -563,6 +614,27 @@ const validateSellerProfile = [
     .trim()
     .isLength({ max: 80 })
     .withMessage('Instagram handle must be 80 characters or less'),
+  body('businessType')
+    .optional()
+    .isIn(['registered_business', 'sole_trader', 'independent_seller'])
+    .withMessage('Choose a valid business type'),
+  body('taxStatus')
+    .optional()
+    .isIn(['not_registered', 'registered', 'not_applicable'])
+    .withMessage('Choose a valid tax status'),
+  body('returnPolicy')
+    .optional()
+    .isIn(['not_specified', 'returns_accepted', 'final_sale', 'contact_seller'])
+    .withMessage('Choose a valid return policy'),
+  body('returnPolicyDetail')
+    .optional({ checkFalsy: true })
+    .trim()
+    .isLength({ max: 500 })
+    .withMessage('Return policy details must be 500 characters or less'),
+  body('responseTimeCommitment')
+    .optional()
+    .isIn(['not_specified', 'within_24_hours', 'within_48_hours', 'within_3_days'])
+    .withMessage('Choose a valid response time commitment'),
   body('acceptedPaymentMethods')
     .optional()
     .isArray({ min: 1, max: 3 })
@@ -611,7 +683,7 @@ const securityHeaders = (req, res, next) => {
 
 // ── 7. HPP PROTECTION ──
 const hppProtection = hpp({
-  whitelist: ['price', 'rating', 'category']
+  whitelist: ['price', 'rating', 'category', 'brand', 'productType']
 })
 
 module.exports = {

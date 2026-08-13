@@ -27,9 +27,10 @@ const {
   hashRecoveryCode,
   consumeRecoveryCode
 } = require('../utils/otp')
-const { verifyGoogleCredential } = require('../utils/googleAuth')
+const { getGoogleAuthOptions, verifyGoogleCredential } = require('../utils/googleAuth')
 const { sendOtpEmail, sendPrivacyRequestEmail } = require('../utils/email')
 const { recordAudit } = require('../utils/audit')
+const { getRequiredSellerDocumentTypes } = require('../utils/sellerVerification')
 const {
   REFRESH_COOKIE,
   clearAuthCookies,
@@ -174,7 +175,7 @@ const handleRouteError = (res, error) => {
   })
 }
 
-const requiredSellerProfileFields = ['storeName', 'businessEmail', 'phone', 'city', 'province']
+const requiredSellerProfileFields = ['brandName', 'storeName', 'businessEmail', 'phone', 'city', 'province']
 
 const isSellerProfileComplete = (sellerProfile = {}) => (
   requiredSellerProfileFields.every((field) => String(sellerProfile[field] || '').trim().length > 0)
@@ -183,6 +184,11 @@ const isSellerProfileComplete = (sellerProfile = {}) => (
 // CSRF BOOTSTRAP
 router.get('/csrf', (req, res) => {
   res.json({ csrfToken: issueCsrfToken(res) })
+})
+
+// Google client IDs are public identifiers. The credential itself is still verified server-side.
+router.get('/auth-options', (req, res) => {
+  res.json({ google: getGoogleAuthOptions() })
 })
 
 // ROTATE REFRESH SESSION
@@ -243,7 +249,7 @@ router.post('/logout', async (req, res) => {
 // REGISTER
 router.post('/register', validateRegister, handleValidationErrors, async (req, res) => {
   try {
-    const { name, email, password, isSeller } = req.body
+    const { name, email, password, isSeller, brandName } = req.body
 
     const userExists = await User.findOne({ email })
 
@@ -265,7 +271,10 @@ router.post('/register', validateRegister, handleValidationErrors, async (req, r
       email,
       password,
       isSeller: isSeller || false,
-      isEmailVerified: false
+      isEmailVerified: false,
+      sellerProfile: isSeller ? {
+        brandName: String(brandName || '').trim()
+      } : undefined
     })
 
     await sendEmailVerification(user)
@@ -346,7 +355,10 @@ router.post('/google', validateGoogleAuth, handleValidationErrors, async (req, r
         googleSubject: profile.subject,
         avatar: profile.avatar,
         isEmailVerified: true,
-        isSeller: req.body.isSeller === true
+        isSeller: req.body.isSeller === true,
+        sellerProfile: req.body.isSeller === true ? {
+          brandName: String(req.body.brandName || '').trim()
+        } : undefined
       })
     } else {
       if (user.isEmailVerified === false) {
@@ -831,7 +843,15 @@ router.put('/seller-profile', protect, validateSellerProfile, handleValidationEr
       return res.status(403).json({ message: 'Only sellers can update seller profiles' })
     }
 
+    const hasBrandNameUpdate = Object.prototype.hasOwnProperty.call(req.body, 'brandName')
+    const previousBrandName = String(user.sellerProfile.brandName || '').trim()
+    const requestedBrandName = String(req.body.brandName || '').trim()
+    if (hasBrandNameUpdate && requestedBrandName.length < 2) {
+      return res.status(400).json({ message: 'Brand name must be between 2 and 80 characters.' })
+    }
+
     const allowedFields = [
+      'brandName',
       'storeName',
       'bio',
       'businessEmail',
@@ -841,6 +861,11 @@ router.put('/seller-profile', protect, validateSellerProfile, handleValidationEr
       'country',
       'website',
       'instagram',
+      'businessType',
+      'taxStatus',
+      'returnPolicy',
+      'returnPolicyDetail',
+      'responseTimeCommitment',
       'acceptedPaymentMethods'
     ]
 
@@ -857,7 +882,7 @@ router.put('/seller-profile', protect, validateSellerProfile, handleValidationEr
         })
       }
 
-      const requiredDocumentTypes = ['identity', 'business', 'address']
+      const requiredDocumentTypes = getRequiredSellerDocumentTypes(user.sellerProfile)
       const uploadedTypes = new Set((user.sellerProfile.documents || []).map(document => document.type))
       const missingDocuments = requiredDocumentTypes.filter(type => !uploadedTypes.has(type))
       if (missingDocuments.length) {
@@ -880,6 +905,13 @@ router.put('/seller-profile', protect, validateSellerProfile, handleValidationEr
     }
 
     const updatedUser = await user.save()
+    if (hasBrandNameUpdate && requestedBrandName !== previousBrandName) {
+      // A seller owns one buyer-facing brand. Keep their existing catalogue searchable under it.
+      await Product.updateMany(
+        { seller: updatedUser._id },
+        { $set: { brand: requestedBrandName } }
+      )
+    }
     res.json(getAuthPayload(updatedUser))
   } catch (error) {
     res.status(500).json({ message: error.message })

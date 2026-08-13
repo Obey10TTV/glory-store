@@ -6,10 +6,26 @@ const {
   validateProduct,
   handleValidationErrors
 } = require('../middleware/security')
+const { canonicalizeProductType } = require('../utils/catalogTaxonomy')
+
+const publicSellerFields = [
+  'name',
+  'sellerProfile.storeName',
+  'sellerProfile.brandName',
+  'sellerProfile.verificationStatus',
+  'sellerProfile.returnPolicy',
+  'sellerProfile.returnPolicyDetail',
+  'sellerProfile.responseTimeCommitment'
+].join(' ')
 
 const canManageProduct = (product, user) => {
   const sellerId = product.seller?._id || product.seller
   return user.isAdmin || sellerId?.toString() === user._id.toString()
+}
+
+const getSellerListingBrand = (user, requestedBrand = '') => {
+  if (user.isAdmin) return String(requestedBrand || '').trim()
+  return String(user.sellerProfile?.brandName || user.sellerProfile?.storeName || '').trim()
 }
 
 const prepareListingEvidence = (evidence = {}, { reviewed = false } = {}) => ({
@@ -17,6 +33,10 @@ const prepareListingEvidence = (evidence = {}, { reviewed = false } = {}) => ({
   condition: evidence.condition,
   packagingPhotosConfirmed: evidence.packagingPhotosConfirmed === true || evidence.packagingPhotosConfirmed === 'true',
   batchCode: String(evidence.batchCode || '').trim(),
+  expiryOrPao: String(evidence.expiryOrPao || '').trim(),
+  supplierInvoiceAvailable: evidence.supplierInvoiceAvailable === true || evidence.supplierInvoiceAvailable === 'true',
+  supplierInvoiceReference: String(evidence.supplierInvoiceReference || '').trim(),
+  safetyDocumentationAvailable: evidence.safetyDocumentationAvailable === true || evidence.safetyDocumentationAvailable === 'true',
   responsiblePersonName: String(evidence.responsiblePersonName || '').trim(),
   declarationAccepted: evidence.declarationAccepted === true || evidence.declarationAccepted === 'true',
   submittedAt: new Date(),
@@ -40,6 +60,13 @@ router.get('/', async (req, res) => {
       ]
     }
     if (req.query.category) query.category = String(req.query.category).slice(0, 80)
+    if (req.query.productType) {
+      const productType = canonicalizeProductType(query.category, req.query.productType)
+      if (!productType) {
+        return res.status(400).json({ message: 'Choose a product type that belongs to the selected category' })
+      }
+      query.productType = productType
+    }
     if (req.query.brand) query.brand = String(req.query.brand).slice(0, 80)
     if (req.query.minPrice || req.query.maxPrice) {
       query.price = {}
@@ -55,23 +82,31 @@ router.get('/', async (req, res) => {
     const sort = sortOptions[req.query.sort] || sortOptions.newest
 
     const productQuery = Product.find(query)
-      .populate('seller', 'name sellerProfile.storeName sellerProfile.verificationStatus')
+      .populate('seller', publicSellerFields)
       .sort(sort)
 
     if (!hasCatalogueQuery) {
       return res.json(await productQuery)
     }
 
-    const [products, total, categories, brands] = await Promise.all([
+    const facetQuery = { ...query }
+    delete facetQuery.brand
+    delete facetQuery.productType
+    const [products, total, categories, brands, productTypes] = await Promise.all([
       productQuery.skip((page - 1) * limit).limit(limit),
       Product.countDocuments(query),
       Product.distinct('category', { approvalStatus: 'approved' }),
-      Product.distinct('brand', { approvalStatus: 'approved' })
+      Product.distinct('brand', facetQuery),
+      Product.distinct('productType', facetQuery)
     ])
     res.json({
       items: products,
       pagination: { page, limit, total, pages: Math.max(1, Math.ceil(total / limit)) },
-      facets: { categories: categories.sort(), brands: brands.sort() }
+      facets: {
+        categories: categories.sort(),
+        brands: brands.sort(),
+        productTypes: productTypes.filter(Boolean).sort()
+      }
     })
   } catch (error) {
     res.status(500).json({ message: error.message })
@@ -95,7 +130,7 @@ router.get('/mine', protect, seller, async (req, res) => {
 // GET SINGLE PRODUCT - Public
 router.get('/:id', async (req, res) => {
   try {
-    const product = await Product.findById(req.params.id).populate('seller', 'name sellerProfile.storeName sellerProfile.verificationStatus')
+    const product = await Product.findById(req.params.id).populate('seller', publicSellerFields)
     if (!product || product.approvalStatus !== 'approved') {
       return res.status(404).json({ message: 'Product not found' })
     }
@@ -113,10 +148,15 @@ router.post('/', protect, verifiedSeller, validateProduct, handleValidationError
       barcode, description, ingredients, howToUse, keyBenefits, category,
       image, images, variants, brand, countInStock, lowStockThreshold, listingEvidence
     } = req.body
+    const listingBrand = getSellerListingBrand(req.user, brand)
+    const canonicalProductType = canonicalizeProductType(category, productType)
+    if (!listingBrand) {
+      return res.status(400).json({ message: 'Add a brand name to your seller profile before submitting a listing.' })
+    }
     const product = await Product.create({
-      name, price, compareAtPrice, sku, size, productType, countryOfOrigin,
+      name, price, compareAtPrice, sku, size, productType: canonicalProductType, countryOfOrigin,
       barcode, description, ingredients, howToUse, keyBenefits, category,
-      image, images, variants, brand, countInStock, lowStockThreshold,
+      image, images, variants, brand: listingBrand, countInStock, lowStockThreshold,
       seller: req.user._id,
       approvalStatus: req.user.isAdmin ? 'approved' : 'pending',
       listingEvidence: prepareListingEvidence(listingEvidence, { reviewed: req.user.isAdmin }),
@@ -153,6 +193,17 @@ router.put('/:id', protect, verifiedSeller, validateProduct, handleValidationErr
         product[field] = req.body[field]
       }
     })
+    product.productType = canonicalizeProductType(product.category, product.productType)
+    if (!product.productType) {
+      return res.status(400).json({ message: 'Choose a product type that belongs to the selected category.' })
+    }
+    if (!req.user.isAdmin) {
+      const listingBrand = getSellerListingBrand(req.user)
+      if (!listingBrand) {
+        return res.status(400).json({ message: 'Add a brand name to your seller profile before updating a listing.' })
+      }
+      product.brand = listingBrand
+    }
 
     if (!req.user.isAdmin) {
       product.approvalStatus = 'pending'

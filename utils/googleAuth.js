@@ -76,6 +76,13 @@ const verifyGoogleCredential = async (credential) => {
 }
 
 module.exports = {
+  getGoogleAuthOptions: () => {
+    const clientId = String(process.env.GOOGLE_CLIENT_ID || '').trim()
+    return {
+      enabled: Boolean(clientId),
+      clientId: clientId || null
+    }
+  },
   normalizeGooglePayload,
   verifyGoogleCredential
 }

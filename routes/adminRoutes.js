@@ -11,6 +11,8 @@ const { aggregateOrderStatus, recordConfirmedRefund, releaseOrderInventory } = r
 const { getMarketplaceConfig } = require('../services/marketplaceService')
 const { sendOrderStatusEmail } = require('../utils/email')
 const { recordAudit } = require('../utils/audit')
+const { isCosmeticsCategory } = require('../utils/catalogTaxonomy')
+const { getRequiredSellerDocumentTypes } = require('../utils/sellerVerification')
 
 cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
@@ -20,11 +22,17 @@ cloudinary.config({
 
 const hasListingEvidence = (product) => {
   const evidence = product.listingEvidence || {}
-  return evidence.status === 'submitted'
+  const hasCoreEvidence = evidence.status === 'submitted'
     && Boolean(evidence.packagingPhotosConfirmed)
     && Boolean(evidence.declarationAccepted)
+    && Boolean(evidence.supplierInvoiceAvailable)
     && String(evidence.batchCode || '').trim().length >= 2
     && String(evidence.responsiblePersonName || '').trim().length >= 2
+  if (!hasCoreEvidence) return false
+  if (!isCosmeticsCategory(product.category)) return true
+
+  return Boolean(evidence.safetyDocumentationAvailable)
+    && String(evidence.expiryOrPao || '').trim().length >= 2
 }
 
 
@@ -204,6 +212,7 @@ router.get('/products', protect, admin, async (req, res) => {
 router.put('/products/:id/status', protect, admin, async (req, res) => {
   try {
     const { approvalStatus, rejectionReason = '' } = req.body
+    const brandAuthorisationChecked = req.body.brandAuthorisationChecked === true
     const allowedStatuses = ['pending', 'approved', 'rejected']
 
     if (!allowedStatuses.includes(approvalStatus)) {
@@ -253,6 +262,9 @@ router.put('/products/:id/status', protect, admin, async (req, res) => {
     if (approvalStatus === 'approved') {
       product.listingEvidence.status = 'reviewed'
       product.listingEvidence.reviewedAt = new Date()
+      product.listingEvidence.brandAuthorisationStatus = brandAuthorisationChecked
+        ? 'authorised'
+        : 'not_reviewed'
     } else if (approvalStatus === 'rejected') {
       product.listingEvidence.status = 'rejected'
       product.listingEvidence.reviewedAt = new Date()
@@ -292,7 +304,7 @@ router.put('/users/:id/seller-status', protect, admin, async (req, res) => {
     }
 
     if (verificationStatus === 'verified') {
-      const requiredTypes = ['identity', 'business', 'address']
+      const requiredTypes = getRequiredSellerDocumentTypes(user.sellerProfile)
       const approvedTypes = new Set(
         (user.sellerProfile.documents || [])
           .filter(document => document.status === 'approved')

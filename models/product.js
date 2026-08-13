@@ -29,8 +29,17 @@ const listingEvidenceSchema = new mongoose.Schema({
   },
   packagingPhotosConfirmed: { type: Boolean, default: false },
   batchCode: { type: String, trim: true, maxlength: 80, default: '' },
+  expiryOrPao: { type: String, trim: true, maxlength: 80, default: '' },
+  supplierInvoiceAvailable: { type: Boolean, default: false },
+  supplierInvoiceReference: { type: String, trim: true, maxlength: 160, default: '' },
+  safetyDocumentationAvailable: { type: Boolean, default: false },
   responsiblePersonName: { type: String, trim: true, maxlength: 160, default: '' },
   declarationAccepted: { type: Boolean, default: false },
+  brandAuthorisationStatus: {
+    type: String,
+    enum: ['not_reviewed', 'authorised', 'not_applicable'],
+    default: 'not_reviewed'
+  },
   submittedAt: Date,
   reviewedAt: Date
 }, { _id: false })
@@ -88,13 +97,17 @@ const productSchema = new mongoose.Schema({
 }, { timestamps: true })
 
 productSchema.index({ name: 'text', brand: 'text', description: 'text', category: 'text' })
-productSchema.index({ approvalStatus: 1, category: 1, brand: 1, price: 1, createdAt: -1 })
+productSchema.index({ approvalStatus: 1, category: 1, productType: 1, brand: 1, price: 1, createdAt: -1 })
 productSchema.index({ seller: 1, countInStock: 1 })
 
 productSchema.set('toJSON', {
   transform: (doc, ret) => {
     if (ret.listingEvidence) {
       delete ret.listingEvidence.batchCode
+      delete ret.listingEvidence.expiryOrPao
+      delete ret.listingEvidence.supplierInvoiceAvailable
+      delete ret.listingEvidence.supplierInvoiceReference
+      delete ret.listingEvidence.safetyDocumentationAvailable
       delete ret.listingEvidence.responsiblePersonName
       delete ret.listingEvidence.packagingPhotosConfirmed
       delete ret.listingEvidence.declarationAccepted
