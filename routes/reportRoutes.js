@@ -3,6 +3,9 @@ const mongoose = require('mongoose')
 const ListingReport = require('../models/listingReport')
 const Product = require('../models/product')
 const AuditLog = require('../models/auditLog')
+const { getReportSlaState, scheduleReportReview } = require('../services/trustSafetyService')
+const { sendTrustSafetyAlert } = require('../utils/email')
+const { logger } = require('../middleware/logger')
 const { protect, admin } = require('../middleware/auth')
 const {
   reportLimiter,
@@ -37,12 +40,14 @@ router.post('/listings/:id', protect, reportLimiter, validateListingReport, hand
       return res.status(409).json({ message: 'You have already reported this listing. Our team will review it.' })
     }
 
+    const reviewSchedule = scheduleReportReview(req.body.reason)
     const report = await ListingReport.create({
       reporter: req.user._id,
       listing: listing._id,
       seller: listing.seller,
       reason: req.body.reason,
-      detail: req.body.detail || ''
+      detail: req.body.detail || '',
+      ...reviewSchedule
     })
     await recordAudit(req, {
       action: 'listing_report_created',
@@ -50,6 +55,19 @@ router.post('/listings/:id', protect, reportLimiter, validateListingReport, hand
       entityId: report._id.toString(),
       summary: `Confidential report submitted for ${listing._id}`
     })
+    if (['critical', 'high'].includes(report.priority)) {
+      sendTrustSafetyAlert({
+        reportId: report._id.toString(),
+        listingId: listing._id.toString(),
+        reason: report.reason,
+        priority: report.priority,
+        triageDueAt: report.triageDueAt
+      }).catch(error => logger.error({
+        type: 'TRUST_SAFETY_ALERT_FAILED',
+        reportId: report._id.toString(),
+        message: error.message
+      }))
+    }
     res.status(201).json({ message: 'Thanks. Your confidential report has been sent to Glory Trust & Safety.' })
   } catch (error) {
     res.status(500).json({ message: 'Unable to submit this report.' })
@@ -62,7 +80,10 @@ router.get('/mine', protect, async (req, res) => {
       .populate('listing', 'name image category')
       .sort({ createdAt: -1 })
       .limit(100)
-    res.json(reports)
+    res.json(reports.map(report => ({
+      ...report.toJSON(),
+      slaState: getReportSlaState(report)
+    })))
   } catch (error) {
     res.status(500).json({ message: 'Unable to load your reports.' })
   }
@@ -80,7 +101,10 @@ router.get('/admin', protect, admin, async (req, res) => {
       .populate('reviewedBy', 'name email')
       .sort({ createdAt: -1 })
       .limit(200)
-    res.json(reports)
+    res.json(reports.map(report => ({
+      ...report.toJSON(),
+      slaState: getReportSlaState(report)
+    })))
   } catch (error) {
     res.status(500).json({ message: 'Unable to load listing reports.' })
   }
@@ -96,6 +120,7 @@ router.put('/admin/:id', protect, admin, moderationLimiter, validateReportReview
 
     report.status = req.body.status
     report.adminNote = req.body.adminNote || ''
+    if (!report.firstReviewedAt && req.body.status !== 'received') report.firstReviewedAt = new Date()
     report.reviewedAt = ['actioned', 'dismissed'].includes(req.body.status) ? new Date() : undefined
     report.reviewedBy = ['actioned', 'dismissed'].includes(req.body.status) ? req.user._id : undefined
 

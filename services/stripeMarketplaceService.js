@@ -1,4 +1,5 @@
 const User = require('../models/user')
+const { getEffectiveSellerPlan } = require('./marketplaceService')
 
 const updateConnectedAccountStatus = async (user, account) => {
   const profile = user.sellerProfile
@@ -13,22 +14,35 @@ const updateConnectedAccountStatus = async (user, account) => {
   return profile.payoutStatus
 }
 
-const getSellerCommerceStatus = (user, marketplace) => ({
-  activation: {
-    required: marketplace.sellerActivationRequired,
-    feePence: marketplace.sellerActivationFeePence,
-    currency: marketplace.currency,
-    status: user.sellerProfile?.activationStatus || 'unpaid',
-    paidAt: user.sellerProfile?.activationPaidAt
-  },
-  payouts: {
-    status: user.sellerProfile?.payoutStatus || 'not_started',
-    detailsSubmitted: Boolean(user.sellerProfile?.stripeDetailsSubmitted),
-    chargesEnabled: Boolean(user.sellerProfile?.stripeChargesEnabled),
-    payoutsEnabled: Boolean(user.sellerProfile?.stripePayoutsEnabled)
-  },
-  acceptedPaymentMethods: user.sellerProfile?.acceptedPaymentMethods || ['card']
-})
+const getSellerCommerceStatus = (user, marketplace) => {
+  const effectivePlan = getEffectiveSellerPlan(user.sellerProfile)
+  return {
+    activation: {
+      required: marketplace.sellerActivationRequired,
+      feePence: marketplace.sellerActivationFeePence,
+      currency: marketplace.currency,
+      status: user.sellerProfile?.activationStatus || 'unpaid',
+      paidAt: user.sellerProfile?.activationPaidAt
+    },
+    membership: {
+      planCode: effectivePlan.code,
+      requestedPlanCode: user.sellerProfile?.membershipPlanCode || 'starter',
+      label: effectivePlan.label,
+      status: user.sellerProfile?.membershipStatus || 'active',
+      activeListingLimit: effectivePlan.activeListingLimit,
+      promotionDiscountBps: effectivePlan.promotionDiscountBps,
+      currentPeriodEnd: user.sellerProfile?.membershipCurrentPeriodEnd,
+      cancelAtPeriodEnd: Boolean(user.sellerProfile?.membershipCancelAtPeriodEnd)
+    },
+    payouts: {
+      status: user.sellerProfile?.payoutStatus || 'not_started',
+      detailsSubmitted: Boolean(user.sellerProfile?.stripeDetailsSubmitted),
+      chargesEnabled: Boolean(user.sellerProfile?.stripeChargesEnabled),
+      payoutsEnabled: Boolean(user.sellerProfile?.stripePayoutsEnabled)
+    },
+    acceptedPaymentMethods: user.sellerProfile?.acceptedPaymentMethods || ['card']
+  }
+}
 
 const transferOrderAllocations = async ({ stripe, order, paymentIntentId, logger }) => {
   if (!stripe || !order?.isPaid || !order.sellerAllocations?.length) return order

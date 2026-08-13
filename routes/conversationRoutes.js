@@ -16,10 +16,12 @@ const populateConversation = (query) => query
   .populate('listing', 'name image price category approvalStatus')
   .populate('buyer', 'name')
   .populate('seller', 'name sellerProfile.storeName sellerProfile.verificationStatus')
+  .populate('review', 'status')
   .populate('messages.sender', 'name')
 
 const isParticipant = (conversation, userId) => (
-  String(conversation.buyer) === String(userId) || String(conversation.seller) === String(userId)
+  String(conversation.buyer?._id || conversation.buyer) === String(userId)
+  || String(conversation.seller?._id || conversation.seller) === String(userId)
 )
 
 const safeConversation = (conversation, userId) => {
@@ -165,6 +167,49 @@ router.patch('/:id/close', protect, async (req, res) => {
     res.json(safeConversation(populated, req.user._id))
   } catch (error) {
     res.status(500).json({ message: 'Unable to close this conversation.' })
+  }
+})
+
+router.post('/:id/transaction-confirmation', protect, conversationLimiter, async (req, res) => {
+  try {
+    if (!mongoose.isValidObjectId(req.params.id)) {
+      return res.status(404).json({ message: 'Conversation not found.' })
+    }
+    if (req.user.isEmailVerified === false) {
+      return res.status(403).json({ message: 'Verify your email before confirming a transaction.' })
+    }
+
+    const conversation = await Conversation.findById(req.params.id)
+    if (!conversation || !isParticipant(conversation, req.user._id)) {
+      return res.status(404).json({ message: 'Conversation not found.' })
+    }
+    if (conversation.status === 'blocked') {
+      return res.status(403).json({ message: 'This conversation is not available.' })
+    }
+
+    const buyerHasMessaged = conversation.messages.some(message => String(message.sender) === String(conversation.buyer))
+    const sellerHasMessaged = conversation.messages.some(message => String(message.sender) === String(conversation.seller))
+    if (!buyerHasMessaged || !sellerHasMessaged) {
+      return res.status(400).json({ message: 'Both buyer and seller must participate in the conversation before confirming a transaction.' })
+    }
+
+    const now = new Date()
+    const isBuyer = String(conversation.buyer) === String(req.user._id)
+    if (isBuyer && !conversation.buyerConfirmedAt) conversation.buyerConfirmedAt = now
+    if (!isBuyer && !conversation.sellerConfirmedAt) conversation.sellerConfirmedAt = now
+
+    if (conversation.buyerConfirmedAt && conversation.sellerConfirmedAt) {
+      conversation.transactionStatus = 'confirmed'
+      conversation.completedAt = conversation.completedAt || now
+    } else {
+      conversation.transactionStatus = isBuyer ? 'buyer_confirmed' : 'seller_confirmed'
+    }
+    await conversation.save()
+
+    const populated = await populateConversation(Conversation.findById(conversation._id))
+    res.json(safeConversation(populated, req.user._id))
+  } catch (error) {
+    res.status(500).json({ message: 'Unable to confirm this transaction.' })
   }
 })
 

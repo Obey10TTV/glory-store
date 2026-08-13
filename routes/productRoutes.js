@@ -7,6 +7,8 @@ const {
   handleValidationErrors
 } = require('../middleware/security')
 const { canonicalizeProductType } = require('../utils/catalogTaxonomy')
+const { getEffectiveSellerPlan } = require('../services/marketplaceService')
+const { enforceSellerPlanVisibility } = require('../services/sellerPlanEnforcementService')
 
 const publicSellerFields = [
   'name',
@@ -49,7 +51,7 @@ router.get('/', async (req, res) => {
     const hasCatalogueQuery = Object.keys(req.query).length > 0
     const page = Math.max(1, Number.parseInt(req.query.page, 10) || 1)
     const limit = Math.min(48, Math.max(1, Number.parseInt(req.query.limit, 10) || 24))
-    const query = { approvalStatus: 'approved' }
+    const query = { approvalStatus: 'approved', planVisibilityStatus: { $ne: 'paused' } }
     const q = String(req.query.q || '').trim().slice(0, 100)
     if (q) {
       const escaped = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
@@ -95,7 +97,7 @@ router.get('/', async (req, res) => {
     const [products, total, categories, brands, productTypes] = await Promise.all([
       productQuery.skip((page - 1) * limit).limit(limit),
       Product.countDocuments(query),
-      Product.distinct('category', { approvalStatus: 'approved' }),
+      Product.distinct('category', { approvalStatus: 'approved', planVisibilityStatus: { $ne: 'paused' } }),
       Product.distinct('brand', facetQuery),
       Product.distinct('productType', facetQuery)
     ])
@@ -130,8 +132,12 @@ router.get('/mine', protect, seller, async (req, res) => {
 // GET SINGLE PRODUCT - Public
 router.get('/:id', async (req, res) => {
   try {
-    const product = await Product.findById(req.params.id).populate('seller', publicSellerFields)
-    if (!product || product.approvalStatus !== 'approved') {
+    const product = await Product.findOne({
+      _id: req.params.id,
+      approvalStatus: 'approved',
+      planVisibilityStatus: { $ne: 'paused' }
+    }).populate('seller', publicSellerFields)
+    if (!product) {
       return res.status(404).json({ message: 'Product not found' })
     }
     res.json(product)
@@ -152,6 +158,21 @@ router.post('/', protect, verifiedSeller, validateProduct, handleValidationError
     const canonicalProductType = canonicalizeProductType(category, productType)
     if (!listingBrand) {
       return res.status(400).json({ message: 'Add a brand name to your seller profile before submitting a listing.' })
+    }
+    if (!req.user.isAdmin) {
+      const sellerPlan = getEffectiveSellerPlan(req.user.sellerProfile)
+      const currentListingCount = await Product.countDocuments({
+        seller: req.user._id,
+        approvalStatus: { $ne: 'rejected' }
+      })
+      if (currentListingCount >= sellerPlan.activeListingLimit) {
+        return res.status(403).json({
+          message: `Your ${sellerPlan.label} plan supports up to ${sellerPlan.activeListingLimit} active or pending listings. Upgrade your seller plan or remove an existing listing first.`,
+          code: 'SELLER_PLAN_LISTING_LIMIT',
+          planCode: sellerPlan.code,
+          activeListingLimit: sellerPlan.activeListingLimit
+        })
+      }
     }
     const product = await Product.create({
       name, price, compareAtPrice, sku, size, productType: canonicalProductType, countryOfOrigin,
@@ -234,6 +255,7 @@ router.delete('/:id', protect, seller, async (req, res) => {
       return res.status(403).json({ message: 'Not authorized to delete this product' })
     }
     await Product.findByIdAndDelete(req.params.id)
+    if (!req.user.isAdmin) await enforceSellerPlanVisibility(req.user._id)
     res.json({ message: 'Product deleted successfully' })
   } catch (error) {
     res.status(500).json({ message: error.message })

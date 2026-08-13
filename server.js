@@ -37,6 +37,7 @@ const {
 const { httpLogger, logger } = require('./middleware/logger')
 const { csrfProtection } = require('./middleware/csrf')
 const { releaseExpiredReservations } = require('./services/reservationService')
+const { migrateLegacyProductReviews } = require('./services/reviewMigrationService')
 
 const app = express()
 app.disable('x-powered-by')
@@ -159,6 +160,8 @@ const connectDatabase = async () => {
       serverSelectionTimeoutMS: 15000
     })
     logger.info('MongoDB connected successfully')
+    const migrated = await migrateLegacyProductReviews()
+    if (migrated) logger.info('Legacy product reviews migrated to verified-interaction reviews')
   } catch (err) {
     logger.error('MongoDB connection error:', err)
   }

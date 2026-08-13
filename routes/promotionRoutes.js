@@ -2,15 +2,9 @@ const express = require('express')
 const Promotion = require('../models/promotion')
 const { protect, seller } = require('../middleware/auth')
 const { getPromotionPlans } = require('../services/marketplaceService')
+const { releaseExpiredPromotionSlots } = require('../services/promotionService')
 
 const router = express.Router()
-
-const expireDuePromotions = async () => {
-  await Promotion.updateMany(
-    { status: 'active', endsAt: { $lte: new Date() } },
-    { $set: { status: 'expired' } }
-  )
-}
 
 const publicPlan = (plan) => ({
   code: plan.code,
@@ -28,7 +22,7 @@ router.get('/plans', (req, res) => {
 
 router.get('/homepage', async (req, res) => {
   try {
-    await expireDuePromotions()
+    await releaseExpiredPromotionSlots()
     const now = new Date()
     const promotions = await Promotion.find({
       placement: 'homepage_featured',
@@ -40,7 +34,7 @@ router.get('/homepage', async (req, res) => {
       .limit(8)
       .populate({
         path: 'listing',
-        match: { approvalStatus: 'approved', countInStock: { $gt: 0 } },
+        match: { approvalStatus: 'approved', planVisibilityStatus: { $ne: 'paused' }, countInStock: { $gt: 0 } },
         select: 'name price compareAtPrice category image images brand rating numReviews countInStock seller approvalStatus',
         populate: {
           path: 'seller',
@@ -67,7 +61,7 @@ router.get('/homepage', async (req, res) => {
 
 router.get('/mine', protect, seller, async (req, res) => {
   try {
-    await expireDuePromotions()
+    await releaseExpiredPromotionSlots()
     const promotions = await Promotion.find({ seller: req.user._id })
       .populate('listing', 'name image brand category approvalStatus')
       .sort({ createdAt: -1 })

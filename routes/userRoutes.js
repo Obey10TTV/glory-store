@@ -4,6 +4,7 @@ const bcrypt = require('bcryptjs')
 const User = require('../models/user')
 const Order = require('../models/order')
 const Product = require('../models/product')
+const Review = require('../models/review')
 const { protect } = require('../middleware/auth')
 const {
   validateRegister,
@@ -30,7 +31,7 @@ const {
 const { getGoogleAuthOptions, verifyGoogleCredential } = require('../utils/googleAuth')
 const { sendOtpEmail, sendPrivacyRequestEmail } = require('../utils/email')
 const { recordAudit } = require('../utils/audit')
-const { getRequiredSellerDocumentTypes } = require('../utils/sellerVerification')
+const { getRequiredSellerDocumentTypes, hasVerifiedSellerIdentity } = require('../utils/sellerVerification')
 const {
   REFRESH_COOKIE,
   clearAuthCookies,
@@ -741,16 +742,15 @@ router.get('/privacy/export', protect, async (req, res) => {
     const user = await User.findById(req.user._id)
     if (!user) return res.status(404).json({ message: 'User not found' })
 
-    const [orders, products, reviewedProducts] = await Promise.all([
+    const [orders, products, reviews] = await Promise.all([
       Order.find({ buyer: user._id }).sort({ createdAt: -1 }).lean(),
       Product.find({ seller: user._id }).sort({ createdAt: -1 }).lean(),
-      Product.find({ 'reviews.user': user._id }).select('name reviews').lean()
+      Review.find({ reviewer: user._id })
+        .select('listing rating comment verifiedInteraction status publishedAt createdAt')
+        .populate('listing', 'name')
+        .sort({ createdAt: -1 })
+        .lean()
     ])
-    const reviews = reviewedProducts.flatMap(product => (
-      (product.reviews || [])
-        .filter(review => review.user?.toString() === user._id.toString())
-        .map(review => ({ productId: product._id, productName: product.name, ...review }))
-    ))
     user.privacy.exportRequestedAt = new Date()
     await user.save()
     await recordAudit(req, {
@@ -879,6 +879,12 @@ router.put('/seller-profile', protect, validateSellerProfile, handleValidationEr
       if (!isSellerProfileComplete(user.sellerProfile)) {
         return res.status(400).json({
           message: 'Please complete store name, business email, phone, city and county or region before submitting for verification.'
+        })
+      }
+
+      if (!hasVerifiedSellerIdentity(user.sellerProfile)) {
+        return res.status(400).json({
+          message: 'Complete the hosted government photo-ID check before submitting your seller profile.'
         })
       }
 

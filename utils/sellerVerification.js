@@ -33,10 +33,17 @@ const SELLER_DOCUMENT_KINDS = Object.freeze({
 const SELLER_DOCUMENT_TYPES = Object.freeze(Object.keys(SELLER_DOCUMENT_KINDS))
 
 const getRequiredSellerDocumentTypes = (sellerProfile = {}) => {
-  const required = ['identity', 'business', 'address']
+  const required = ['business', 'address']
   if (sellerProfile.taxStatus === 'registered') required.push('tax')
   return required
 }
+
+const hasVerifiedSellerIdentity = (sellerProfile = {}) => (
+  sellerProfile.identityVerification?.status === 'verified'
+  || (sellerProfile.documents || []).some(document => (
+    document.type === 'identity' && document.status === 'approved'
+  ))
+)
 
 const isValidSellerDocumentKind = (type, kind) => (
   SELLER_DOCUMENT_KINDS[type]?.includes(kind) || false
@@ -46,5 +53,6 @@ module.exports = {
   SELLER_DOCUMENT_KINDS,
   SELLER_DOCUMENT_TYPES,
   getRequiredSellerDocumentTypes,
+  hasVerifiedSellerIdentity,
   isValidSellerDocumentKind
 }

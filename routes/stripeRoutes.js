@@ -8,7 +8,13 @@ const Product = require('../models/product')
 const Promotion = require('../models/promotion')
 const AuditLog = require('../models/auditLog')
 const { markOrderPaid } = require('../services/orderService')
-const { getMarketplaceConfig, getPromotionPlan } = require('../services/marketplaceService')
+const {
+  getMarketplaceConfig,
+  getPromotionPlan,
+  getSellerPlan,
+  getSellerPlans,
+  pricePromotionForSeller
+} = require('../services/marketplaceService')
 const { validatePromotionCheckout, handleValidationErrors } = require('../middleware/security')
 const {
   getSellerCommerceStatus,
@@ -17,6 +23,8 @@ const {
 } = require('../services/stripeMarketplaceService')
 const { sendOrderStatusEmail } = require('../utils/email')
 const { logger } = require('../middleware/logger')
+const { reserveHomepagePromotion } = require('../services/promotionService')
+const { enforceSellerPlanVisibility } = require('../services/sellerPlanEnforcementService')
 
 const stripe = process.env.STRIPE_SECRET_KEY ? new Stripe(process.env.STRIPE_SECRET_KEY) : null
 
@@ -28,6 +36,18 @@ const configuredClientOrigins = [
 
 const getClientOrigin = () => configuredClientOrigins[0]
   || (process.env.NODE_ENV === 'production' ? 'https://glory-ca.vercel.app' : 'http://localhost:3000')
+
+const sellerCheckoutTaxSettings = () => (
+  process.env.STRIPE_AUTOMATIC_TAX === 'true'
+    ? {
+        automatic_tax: { enabled: true },
+        billing_address_collection: 'required',
+        tax_id_collection: { enabled: true }
+      }
+    : {}
+)
+
+const checkoutSubtotal = (session) => Number(session.amount_subtotal ?? session.amount_total)
 
 const canAccessOrder = (order, user) => {
   const buyerId = order.buyer?._id || order.buyer
@@ -42,6 +62,128 @@ const directCheckoutUnavailable = (res) => {
   return true
 }
 
+const publicSellerPlan = (plan) => ({
+  code: plan.code,
+  label: plan.label,
+  description: plan.description,
+  feePence: plan.feePence,
+  currency: plan.currency,
+  interval: plan.interval,
+  activeListingLimit: plan.activeListingLimit,
+  promotionDiscountBps: plan.promotionDiscountBps,
+  features: plan.features
+})
+
+const stripeSubscriptionPeriodEnd = (subscription) => {
+  const itemPeriods = subscription?.items?.data
+    ?.map((item) => Number(item.current_period_end || 0))
+    .filter(Boolean) || []
+  const unixSeconds = Number(subscription?.current_period_end || Math.max(0, ...itemPeriods))
+  return unixSeconds ? new Date(unixSeconds * 1000) : undefined
+}
+
+const membershipStatusFromStripe = (status) => {
+  if (['active', 'trialing'].includes(status)) return 'active'
+  if (['past_due', 'unpaid', 'incomplete'].includes(status)) return 'past_due'
+  if (['canceled', 'incomplete_expired', 'paused'].includes(status)) return 'cancelled'
+  return 'pending'
+}
+
+const applySellerSubscription = async (subscription, fallback = {}) => {
+  if (!subscription) return null
+  const userId = subscription.metadata?.userId || fallback.userId
+  const planCode = subscription.metadata?.planCode || fallback.planCode
+  const plan = getSellerPlan(planCode)
+  if (!userId || !plan || plan.code === 'starter') {
+    throw Object.assign(new Error('Seller plan metadata is incomplete'), { statusCode: 400 })
+  }
+
+  const user = await User.findById(userId)
+    .select('+sellerProfile.billingCustomerId +sellerProfile.billingSubscriptionId')
+  if (!user?.isSeller) {
+    throw Object.assign(new Error('Seller account not found'), { statusCode: 404 })
+  }
+
+  user.sellerProfile.membershipPlanCode = plan.code
+  user.sellerProfile.membershipStatus = membershipStatusFromStripe(subscription.status)
+  user.sellerProfile.membershipCurrentPeriodEnd = stripeSubscriptionPeriodEnd(subscription)
+  user.sellerProfile.membershipCancelAtPeriodEnd = Boolean(subscription.cancel_at_period_end)
+  user.sellerProfile.billingCustomerId = String(subscription.customer || fallback.customerId || '')
+  user.sellerProfile.billingSubscriptionId = String(subscription.id || fallback.subscriptionId || '')
+  await user.save()
+  await enforceSellerPlanVisibility(user._id)
+  return user
+}
+
+const applySellerSubscriptionSession = async (session) => {
+  if (session?.metadata?.purpose !== 'seller_subscription') return null
+  const plan = getSellerPlan(session.metadata?.planCode)
+  if (!plan || plan.code === 'starter') {
+    throw Object.assign(new Error('Seller plan is unavailable'), { statusCode: 400 })
+  }
+  if (
+    session.currency !== String(plan.currency).toLowerCase()
+    || checkoutSubtotal(session) !== Number(plan.feePence)
+  ) {
+    throw Object.assign(new Error('Seller plan amount or currency does not match'), { statusCode: 400 })
+  }
+  if (!session.subscription) {
+    throw Object.assign(new Error('Seller subscription is not ready yet'), { statusCode: 409 })
+  }
+
+  const subscription = typeof session.subscription === 'object'
+    ? session.subscription
+    : await stripe.subscriptions.retrieve(session.subscription)
+  return applySellerSubscription(subscription, {
+    userId: session.metadata?.userId,
+    planCode: plan.code,
+    customerId: session.customer,
+    subscriptionId: session.subscription
+  })
+}
+
+const identityStatusFromStripe = (status) => {
+  if (status === 'verified') return 'verified'
+  if (status === 'processing') return 'processing'
+  if (status === 'canceled') return 'cancelled'
+  return 'requires_input'
+}
+
+const applyIdentityVerificationSession = async (session) => {
+  if (!session) return null
+  const user = session.metadata?.userId
+    ? await User.findById(session.metadata.userId).select('+sellerProfile.identityVerification.sessionId')
+    : await User.findOne({ 'sellerProfile.identityVerification.sessionId': session.id })
+      .select('+sellerProfile.identityVerification.sessionId')
+  if (!user?.isSeller) return null
+
+  const identity = user.sellerProfile.identityVerification
+  identity.provider = 'stripe_identity'
+  identity.sessionId = session.id
+  identity.status = identityStatusFromStripe(session.status)
+  identity.lastCheckedAt = new Date()
+  identity.lastErrorCode = String(session.last_error?.code || '').slice(0, 80)
+  identity.lastErrorReason = String(session.last_error?.reason || '').slice(0, 300)
+  if (session.status === 'verified') {
+    identity.verifiedAt = identity.verifiedAt || new Date()
+    identity.lastErrorCode = ''
+    identity.lastErrorReason = ''
+  }
+  if (session.redaction?.status === 'processing') {
+    identity.status = 'redaction_pending'
+  }
+  if (session.redaction?.status === 'redacted') {
+    identity.status = 'redacted'
+    identity.redactedAt = new Date()
+    if (user.sellerProfile.verificationStatus === 'verified') {
+      user.sellerProfile.verificationStatus = 'incomplete'
+      user.sellerProfile.verificationNote = 'Identity verification data was removed. Complete a new identity check before selling again.'
+    }
+  }
+  await user.save()
+  return user
+}
+
 const applySellerActivationSession = async (session) => {
   if (session?.payment_status !== 'paid' || session.metadata?.purpose !== 'seller_activation') {
     return null
@@ -52,7 +194,7 @@ const applySellerActivationSession = async (session) => {
   if (!userId) throw Object.assign(new Error('Seller activation metadata is incomplete'), { statusCode: 400 })
   if (
     session.currency !== 'gbp'
-    || Number(session.amount_total) !== marketplace.sellerActivationFeePence
+    || checkoutSubtotal(session) !== marketplace.sellerActivationFeePence
   ) {
     throw Object.assign(new Error('Seller activation currency or amount does not match'), { statusCode: 400 })
   }
@@ -91,7 +233,7 @@ const applyHomepagePromotionSession = async (session) => {
 
   if (
     session.currency !== String(promotion.currency).toLowerCase()
-    || Number(session.amount_total) !== Number(promotion.amountPence)
+    || checkoutSubtotal(session) !== Number(promotion.amountPence)
     || session.metadata?.planCode !== promotion.planCode
   ) {
     throw Object.assign(new Error('Promotion payment amount or plan does not match'), { statusCode: 400 })
@@ -102,10 +244,24 @@ const applyHomepagePromotionSession = async (session) => {
     !listing
     || String(listing.seller) !== String(promotion.seller)
     || listing.approvalStatus !== 'approved'
+    || listing.planVisibilityStatus === 'paused'
     || Number(listing.countInStock) <= 0
   ) {
-    promotion.status = 'failed'
-    promotion.failureReason = 'The listing was no longer eligible for homepage placement after payment.'
+    if (session.payment_intent) {
+      await stripe.refunds.create({
+        payment_intent: String(session.payment_intent),
+        reason: 'requested_by_customer',
+        metadata: {
+          purpose: 'homepage_promotion_eligibility_refund',
+          promotionId: promotion._id.toString()
+        }
+      }, {
+        idempotencyKey: `glory-promotion-ineligible-refund-${promotion._id}`
+      })
+    }
+    promotion.status = 'cancelled'
+    promotion.failureReason = 'The listing became ineligible after payment; the promotion payment was refunded.'
+    promotion.slotNumber = undefined
     await promotion.save()
     return promotion
   }
@@ -176,7 +332,8 @@ router.get('/status', (req, res) => {
     platformCommissionBps: marketplace.platformCommissionBps,
     marketplaceMode: marketplace.marketplaceMode,
     directCheckoutEnabled: marketplace.directCheckoutEnabled,
-    paymentMethods: marketplace.paymentMethods
+    paymentMethods: marketplace.paymentMethods,
+    sellerPlans: getSellerPlans().map(publicSellerPlan)
   })
 })
 
@@ -193,12 +350,248 @@ router.get('/seller/status', protect, async (req, res) => {
 
     res.json({
       ...getSellerCommerceStatus(user, marketplace),
-      paymentMethods: marketplace.paymentMethods
+      paymentMethods: marketplace.paymentMethods,
+      sellerPlans: getSellerPlans().map(publicSellerPlan)
     })
   } catch (error) {
     res.status(error.statusCode || 500).json({
       message: error.statusCode ? error.message : 'Unable to load seller payment status'
     })
+  }
+})
+
+router.get('/seller/identity/status', protect, seller, async (req, res) => {
+  try {
+    const user = await User.findById(req.user._id)
+      .select('+sellerProfile.identityVerification.sessionId')
+    if (!user?.isSeller) return res.status(403).json({ message: 'Not authorized as seller' })
+    const identity = user.sellerProfile.identityVerification
+    if (stripe && identity?.sessionId && !['redacted', 'redaction_pending'].includes(identity.status)) {
+      const session = await stripe.identity.verificationSessions.retrieve(identity.sessionId)
+      await applyIdentityVerificationSession(session)
+    }
+    const refreshed = await User.findById(req.user._id)
+    res.json(refreshed?.sellerProfile?.identityVerification || { provider: 'none', status: 'not_started' })
+  } catch (error) {
+    res.status(500).json({ message: 'Unable to load identity verification status.' })
+  }
+})
+
+router.post('/seller/identity/session', protect, seller, async (req, res) => {
+  try {
+    if (!stripe) return res.status(503).json({ message: 'Hosted identity verification is not configured yet.' })
+    if (req.body.acceptDisclosure !== true) {
+      return res.status(400).json({ message: 'Review and accept the identity-verification privacy disclosure first.' })
+    }
+    const user = await User.findById(req.user._id)
+      .select('+sellerProfile.identityVerification.sessionId')
+    if (!user?.isSeller) return res.status(403).json({ message: 'Not authorized as seller' })
+    if (user.isEmailVerified === false || !user.twoFactor?.enabled) {
+      return res.status(403).json({ message: 'Verify your email and enable two-factor authentication first.' })
+    }
+
+    const identity = user.sellerProfile.identityVerification
+    if (identity?.status === 'verified') {
+      return res.json({ alreadyVerified: true, status: 'verified' })
+    }
+    if (identity?.sessionId && !['cancelled', 'redacted'].includes(identity.status)) {
+      const existing = await stripe.identity.verificationSessions.retrieve(identity.sessionId)
+      await applyIdentityVerificationSession(existing)
+      if (existing.status === 'verified') return res.json({ alreadyVerified: true, status: 'verified' })
+      if (existing.status === 'processing') return res.json({ status: 'processing' })
+      if (existing.url && existing.status === 'requires_input') {
+        return res.json({ url: existing.url, status: existing.status })
+      }
+    }
+
+    const session = await stripe.identity.verificationSessions.create({
+      type: 'document',
+      client_reference_id: user._id.toString(),
+      metadata: { userId: user._id.toString(), purpose: 'seller_identity' },
+      provided_details: { email: user.email },
+      options: {
+        document: {
+          allowed_types: ['passport', 'driving_license', 'id_card'],
+          require_matching_selfie: true
+        }
+      },
+      return_url: `${getClientOrigin()}/seller?identity=return`
+    })
+    identity.provider = 'stripe_identity'
+    identity.status = identityStatusFromStripe(session.status)
+    identity.sessionId = session.id
+    identity.disclosureAcceptedAt = new Date()
+    identity.lastCheckedAt = new Date()
+    identity.lastErrorCode = ''
+    identity.lastErrorReason = ''
+    await user.save()
+    await AuditLog.create({
+      actor: user._id,
+      action: 'seller_identity_started',
+      entityType: 'seller_identity',
+      entityId: user._id.toString(),
+      summary: 'Hosted seller identity verification started',
+      requestId: req.requestId || ''
+    })
+    res.json({ url: session.url, status: session.status })
+  } catch (error) {
+    res.status(error.statusCode || 500).json({
+      message: error.statusCode ? error.message : 'Identity verification could not be started.'
+    })
+  }
+})
+
+router.post('/seller/identity/redact', protect, seller, async (req, res) => {
+  try {
+    if (!stripe) return res.status(503).json({ message: 'Hosted identity verification is not configured yet.' })
+    const user = await User.findById(req.user._id)
+      .select('+sellerProfile.identityVerification.sessionId')
+    if (!user || user.privacy?.deletionStatus !== 'pending') {
+      return res.status(403).json({ message: 'Identity redaction is available as part of a confirmed account-deletion request.' })
+    }
+    const identity = user.sellerProfile.identityVerification
+    if (!identity?.sessionId) return res.json({ status: 'not_started' })
+    const session = await stripe.identity.verificationSessions.redact(identity.sessionId)
+    identity.redactionRequestedAt = new Date()
+    identity.status = session.redaction?.status === 'redacted' ? 'redacted' : 'redaction_pending'
+    identity.redactedAt = identity.status === 'redacted' ? new Date() : undefined
+    await user.save()
+    res.json({ status: identity.status })
+  } catch (error) {
+    res.status(500).json({ message: 'Identity verification data could not be scheduled for redaction.' })
+  }
+})
+
+router.post('/seller/subscription', protect, seller, async (req, res) => {
+  try {
+    if (!stripe) return res.status(503).json({ message: 'Seller plan payments are not configured yet' })
+    const plan = getSellerPlan(req.body.planCode)
+    if (!plan || plan.code === 'starter' || !plan.interval) {
+      return res.status(400).json({ message: 'Choose an available paid seller plan.' })
+    }
+
+    const user = await User.findById(req.user._id)
+      .select('+sellerProfile.billingCustomerId +sellerProfile.billingSubscriptionId')
+    if (!user?.isSeller) return res.status(403).json({ message: 'Not authorized as seller' })
+    if (user.isEmailVerified === false || !user.twoFactor?.enabled) {
+      return res.status(403).json({ message: 'Verify your email and enable two-factor authentication first' })
+    }
+    if (user.sellerProfile.verificationStatus !== 'verified') {
+      return res.status(403).json({ message: 'Complete seller verification before choosing a paid plan.' })
+    }
+    if (
+      user.sellerProfile.billingSubscriptionId
+      && ['active', 'pending', 'past_due'].includes(user.sellerProfile.membershipStatus)
+    ) {
+      return res.status(409).json({
+        message: 'Manage your existing paid plan before starting another subscription.',
+        manageBilling: true
+      })
+    }
+
+    const lineItem = plan.stripePriceId
+      ? { price: plan.stripePriceId, quantity: 1 }
+      : {
+          price_data: {
+            currency: String(plan.currency).toLowerCase(),
+            unit_amount: plan.feePence,
+            recurring: { interval: plan.interval },
+            product_data: {
+              name: `Glory ${plan.label} seller plan`,
+              description: `${plan.activeListingLimit} active listings with ${plan.promotionDiscountBps / 100}% off paid visibility.`
+            }
+          },
+          quantity: 1
+        }
+
+    const sessionPayload = {
+      mode: 'subscription',
+      line_items: [lineItem],
+      client_reference_id: user._id.toString(),
+      metadata: {
+        purpose: 'seller_subscription',
+        userId: user._id.toString(),
+        planCode: plan.code
+      },
+      subscription_data: {
+        metadata: {
+          purpose: 'seller_subscription',
+          userId: user._id.toString(),
+          planCode: plan.code
+        }
+      },
+      ...sellerCheckoutTaxSettings(),
+      success_url: `${getClientOrigin()}/seller?membership=success&session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${getClientOrigin()}/seller?membership=cancelled`
+    }
+    if (user.sellerProfile.billingCustomerId) {
+      sessionPayload.customer = user.sellerProfile.billingCustomerId
+    } else {
+      sessionPayload.customer_email = user.email
+    }
+
+    const session = await stripe.checkout.sessions.create(sessionPayload, {
+      idempotencyKey: `glory-seller-plan-${user._id}-${plan.code}-${Date.now().toString().slice(0, -4)}`
+    })
+    user.sellerProfile.membershipPlanCode = plan.code
+    user.sellerProfile.membershipStatus = 'pending'
+    await user.save()
+    await AuditLog.create({
+      actor: user._id,
+      action: 'seller_subscription_checkout_started',
+      entityType: 'seller_subscription',
+      entityId: user._id.toString(),
+      summary: `${plan.label} seller plan checkout started`,
+      requestId: req.requestId || ''
+    })
+    res.json({ url: session.url, sessionId: session.id })
+  } catch (error) {
+    res.status(error.statusCode || 500).json({
+      message: error.statusCode ? error.message : 'Seller plan checkout could not be started'
+    })
+  }
+})
+
+router.get('/seller/subscription/verify/:sessionId', protect, seller, async (req, res) => {
+  try {
+    if (!stripe) return res.status(503).json({ message: 'Seller plan payments are not configured yet' })
+    const session = await stripe.checkout.sessions.retrieve(req.params.sessionId, {
+      expand: ['subscription']
+    })
+    if (
+      session.metadata?.purpose !== 'seller_subscription'
+      || String(session.metadata?.userId) !== String(req.user._id)
+    ) {
+      return res.status(403).json({ message: 'Not authorized to verify this seller plan.' })
+    }
+    const user = await applySellerSubscriptionSession(session)
+    res.json({
+      paymentStatus: session.payment_status,
+      membershipStatus: user?.sellerProfile?.membershipStatus || 'pending',
+      planCode: user?.sellerProfile?.membershipPlanCode || 'starter'
+    })
+  } catch (error) {
+    res.status(error.statusCode || 500).json({
+      message: error.statusCode ? error.message : 'Seller plan verification failed'
+    })
+  }
+})
+
+router.post('/seller/subscription/portal', protect, seller, async (req, res) => {
+  try {
+    if (!stripe) return res.status(503).json({ message: 'Seller billing is not configured yet' })
+    const user = await User.findById(req.user._id)
+      .select('+sellerProfile.billingCustomerId')
+    if (!user?.sellerProfile?.billingCustomerId) {
+      return res.status(404).json({ message: 'No paid seller plan is available to manage.' })
+    }
+    const session = await stripe.billingPortal.sessions.create({
+      customer: user.sellerProfile.billingCustomerId,
+      return_url: `${getClientOrigin()}/seller`
+    })
+    res.json({ url: session.url })
+  } catch (error) {
+    res.status(500).json({ message: 'Seller billing portal could not be opened.' })
   }
 })
 
@@ -265,6 +658,7 @@ router.post('/seller/activation', protect, async (req, res) => {
           userId: user._id.toString()
         }
       },
+      ...sellerCheckoutTaxSettings(),
       success_url: `${getClientOrigin()}/seller?activation=success&session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${getClientOrigin()}/seller?activation=cancelled`
     })
@@ -310,11 +704,13 @@ router.post('/seller/promotions/homepage', protect, verifiedSeller, validateProm
     if (!plan || plan.placement !== 'homepage_featured') {
       return res.status(400).json({ message: 'That promotion plan is unavailable.' })
     }
+    const promotionPrice = pricePromotionForSeller(plan, req.user.sellerProfile)
 
     const listing = await Product.findOne({
       _id: req.body.listingId,
       seller: req.user._id,
       approvalStatus: 'approved',
+      planVisibilityStatus: { $ne: 'paused' },
       countInStock: { $gt: 0 }
     })
     if (!listing) {
@@ -334,6 +730,7 @@ router.post('/seller/promotions/homepage', protect, verifiedSeller, validateProm
     }
     if (existing?.status === 'active') {
       existing.status = 'expired'
+      existing.slotNumber = undefined
       await existing.save()
     }
     if (existing?.status === 'pending_payment' && existing.paymentReference) {
@@ -347,20 +744,27 @@ router.post('/seller/promotions/homepage', protect, verifiedSeller, validateProm
       }
       existing.status = 'failed'
       existing.failureReason = 'The previous promotion payment session expired.'
+      existing.slotNumber = undefined
       await existing.save()
     }
 
-    promotion = await Promotion.create({
+    promotion = await reserveHomepagePromotion({
       seller: req.user._id,
       listing: listing._id,
       placement: plan.placement,
       planCode: plan.code,
       label: plan.label,
-      amountPence: plan.feePence,
+      baseAmountPence: promotionPrice.baseFeePence,
+      discountPence: promotionPrice.discountPence,
+      amountPence: promotionPrice.feePence,
+      sellerPlanCode: promotionPrice.sellerPlanCode,
       currency: plan.currency,
       durationDays: plan.durationDays,
       status: 'pending_payment'
     })
+    if (!promotion) {
+      return res.status(409).json({ message: 'Homepage Spotlight is sold out for the current period. Please try again when a placement becomes available.' })
+    }
 
     const session = await stripe.checkout.sessions.create({
       mode: 'payment',
@@ -368,10 +772,10 @@ router.post('/seller/promotions/homepage', protect, verifiedSeller, validateProm
       line_items: [{
         price_data: {
           currency: String(plan.currency).toLowerCase(),
-          unit_amount: plan.feePence,
+          unit_amount: promotionPrice.feePence,
           product_data: {
             name: `Glory ${plan.label}`,
-            description: `Sponsored home-page placement for ${listing.name}`
+            description: `${plan.durationDays}-day Sponsored homepage placement for ${listing.name}`
           }
         },
         quantity: 1
@@ -390,6 +794,7 @@ router.post('/seller/promotions/homepage', protect, verifiedSeller, validateProm
           planCode: plan.code
         }
       },
+      ...sellerCheckoutTaxSettings(),
       success_url: `${getClientOrigin()}/seller?promotion=success&session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${getClientOrigin()}/seller?promotion=cancelled`,
       expires_at: Math.floor(Date.now() / 1000) + (30 * 60)
@@ -412,6 +817,7 @@ router.post('/seller/promotions/homepage', protect, verifiedSeller, validateProm
     if (promotion && promotion.status === 'pending_payment') {
       promotion.status = 'failed'
       promotion.failureReason = 'The promotion payment session could not be created.'
+      promotion.slotNumber = undefined
       await promotion.save().catch(() => undefined)
     }
     res.status(error.statusCode || 500).json({
@@ -600,7 +1006,9 @@ const handleWebhook = async (req, res) => {
 
     if (['checkout.session.completed', 'checkout.session.async_payment_succeeded'].includes(event.type)) {
       const session = event.data.object
-      if (session.metadata?.purpose === 'seller_activation') {
+      if (session.metadata?.purpose === 'seller_subscription') {
+        await applySellerSubscriptionSession(session)
+      } else if (session.metadata?.purpose === 'seller_activation') {
         await applySellerActivationSession(session)
       } else if (session.metadata?.purpose === 'homepage_promotion') {
         await applyHomepagePromotionSession(session)
@@ -615,6 +1023,29 @@ const handleWebhook = async (req, res) => {
         : await User.findOne({ 'sellerProfile.stripeAccountId': account.id })
       if (user) await updateConnectedAccountStatus(user, account)
     }
+    if ([
+      'identity.verification_session.processing',
+      'identity.verification_session.verified',
+      'identity.verification_session.requires_input',
+      'identity.verification_session.canceled',
+      'identity.verification_session.redacted'
+    ].includes(event.type)) {
+      await applyIdentityVerificationSession(event.data.object)
+    }
+    if (['customer.subscription.updated', 'customer.subscription.deleted'].includes(event.type)) {
+      const subscription = event.data.object
+      const user = subscription.metadata?.userId
+        ? await User.findById(subscription.metadata.userId)
+        : await User.findOne({ 'sellerProfile.billingSubscriptionId': subscription.id })
+      if (user) {
+        if (!subscription.metadata?.userId) subscription.metadata = {
+          ...(subscription.metadata || {}),
+          userId: user._id.toString(),
+          planCode: user.sellerProfile?.membershipPlanCode
+        }
+        await applySellerSubscription(subscription)
+      }
+    }
     res.sendStatus(200)
   } catch (error) {
     logger.error({ type: 'STRIPE_WEBHOOK_FAILED', message: error.message })
@@ -626,5 +1057,8 @@ router.handleWebhook = handleWebhook
 router.applyVerifiedSession = applyVerifiedOrderSession
 router.applySellerActivationSession = applySellerActivationSession
 router.applyHomepagePromotionSession = applyHomepagePromotionSession
+router.applySellerSubscription = applySellerSubscription
+router.applySellerSubscriptionSession = applySellerSubscriptionSession
+router.applyIdentityVerificationSession = applyIdentityVerificationSession
 
 module.exports = router

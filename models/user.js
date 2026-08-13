@@ -240,6 +240,32 @@ const userSchema = new mongoose.Schema({
       maxlength: 500,
       default: ''
     },
+    identityVerification: {
+      provider: {
+        type: String,
+        enum: ['none', 'stripe_identity', 'manual_alternative'],
+        default: 'none'
+      },
+      status: {
+        type: String,
+        enum: ['not_started', 'requires_input', 'processing', 'verified', 'cancelled', 'redaction_pending', 'redacted'],
+        default: 'not_started',
+        index: true
+      },
+      sessionId: {
+        type: String,
+        trim: true,
+        default: '',
+        select: false
+      },
+      disclosureAcceptedAt: Date,
+      verifiedAt: Date,
+      lastCheckedAt: Date,
+      lastErrorCode: { type: String, trim: true, maxlength: 80, default: '' },
+      lastErrorReason: { type: String, trim: true, maxlength: 300, default: '' },
+      redactionRequestedAt: Date,
+      redactedAt: Date
+    },
     documents: {
       type: [sellerDocumentSchema],
       default: []
@@ -276,6 +302,34 @@ const userSchema = new mongoose.Schema({
       default: ''
     },
     activationPaidAt: Date,
+    membershipPlanCode: {
+      type: String,
+      enum: ['starter', 'studio', 'scale', 'partner'],
+      default: 'starter'
+    },
+    membershipStatus: {
+      type: String,
+      enum: ['active', 'pending', 'past_due', 'cancelled'],
+      default: 'active',
+      index: true
+    },
+    membershipCurrentPeriodEnd: Date,
+    membershipCancelAtPeriodEnd: {
+      type: Boolean,
+      default: false
+    },
+    billingCustomerId: {
+      type: String,
+      trim: true,
+      default: '',
+      select: false
+    },
+    billingSubscriptionId: {
+      type: String,
+      trim: true,
+      default: '',
+      select: false
+    },
     stripeAccountId: {
       type: String,
       trim: true,
@@ -326,6 +380,12 @@ const removeSensitiveFields = (ret) => {
   if (ret.sellerProfile) {
     delete ret.sellerProfile.stripeAccountId
     delete ret.sellerProfile.activationPaymentReference
+    delete ret.sellerProfile.billingCustomerId
+    delete ret.sellerProfile.billingSubscriptionId
+    if (ret.sellerProfile.identityVerification) {
+      delete ret.sellerProfile.identityVerification.sessionId
+      delete ret.sellerProfile.identityVerification.lastErrorCode
+    }
   }
   return ret
 }

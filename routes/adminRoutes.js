@@ -9,10 +9,11 @@ const cloudinary = require('cloudinary').v2
 const { protect, admin } = require('../middleware/auth')
 const { aggregateOrderStatus, recordConfirmedRefund, releaseOrderInventory } = require('../services/orderService')
 const { getMarketplaceConfig } = require('../services/marketplaceService')
+const { enforceSellerPlanVisibility } = require('../services/sellerPlanEnforcementService')
 const { sendOrderStatusEmail } = require('../utils/email')
 const { recordAudit } = require('../utils/audit')
 const { isCosmeticsCategory } = require('../utils/catalogTaxonomy')
-const { getRequiredSellerDocumentTypes } = require('../utils/sellerVerification')
+const { getRequiredSellerDocumentTypes, hasVerifiedSellerIdentity } = require('../utils/sellerVerification')
 
 cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
@@ -271,6 +272,7 @@ router.put('/products/:id/status', protect, admin, async (req, res) => {
     }
 
     const updatedProduct = await product.save()
+    if (product.seller) await enforceSellerPlanVisibility(product.seller)
     await recordAudit(req, {
       action: `product_${approvalStatus}`,
       entityType: 'product',
@@ -304,6 +306,11 @@ router.put('/users/:id/seller-status', protect, admin, async (req, res) => {
     }
 
     if (verificationStatus === 'verified') {
+      if (!hasVerifiedSellerIdentity(user.sellerProfile)) {
+        return res.status(400).json({
+          message: 'Complete the hosted identity check before approving this seller.'
+        })
+      }
       const requiredTypes = getRequiredSellerDocumentTypes(user.sellerProfile)
       const approvedTypes = new Set(
         (user.sellerProfile.documents || [])

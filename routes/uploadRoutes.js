@@ -93,6 +93,11 @@ router.post('/seller-document', protect, runUpload(sellerDocumentUpload.single('
     if (!req.user.isSeller) {
       return res.status(403).json({ message: 'Only seller accounts can upload verification documents' })
     }
+    if (documentType === 'identity') {
+      return res.status(410).json({
+        message: "Government photo ID must be verified through Glory's hosted identity provider. Glory does not accept direct passport or national-ID uploads."
+      })
+    }
     if (!SELLER_DOCUMENT_TYPES.includes(documentType) || !isValidSellerDocumentKind(documentType, documentKind)) {
       return res.status(400).json({ message: 'Choose a valid document type' })
     }

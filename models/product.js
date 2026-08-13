@@ -1,12 +1,5 @@
 const mongoose = require('mongoose')
 
-const reviewSchema = new mongoose.Schema({
-  user: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
-  name: { type: String, required: true },
-  rating: { type: Number, required: true },
-  comment: { type: String, required: true }
-}, { timestamps: true })
-
 const variantSchema = new mongoose.Schema({
   name: { type: String, required: true, trim: true, maxlength: 100 },
   sku: { type: String, trim: true, uppercase: true, maxlength: 64, default: '' },
@@ -74,8 +67,13 @@ const productSchema = new mongoose.Schema({
   lowStockThreshold: { type: Number, min: 0, max: 1000, default: 5 },
   rating: { type: Number, default: 0 },
   numReviews: { type: Number, default: 0 },
-  reviews: [reviewSchema],
   seller: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+  planVisibilityStatus: {
+    type: String,
+    enum: ['visible', 'paused'],
+    default: 'visible',
+    index: true
+  },
   acceptedPaymentMethods: {
     type: [{
       type: String,
@@ -99,6 +97,7 @@ const productSchema = new mongoose.Schema({
 productSchema.index({ name: 'text', brand: 'text', description: 'text', category: 'text' })
 productSchema.index({ approvalStatus: 1, category: 1, productType: 1, brand: 1, price: 1, createdAt: -1 })
 productSchema.index({ seller: 1, countInStock: 1 })
+productSchema.index({ seller: 1, planVisibilityStatus: 1, createdAt: 1 })
 
 productSchema.set('toJSON', {
   transform: (doc, ret) => {

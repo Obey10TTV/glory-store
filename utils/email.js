@@ -117,4 +117,27 @@ const sendPrivacyRequestEmail = async ({ to, name, action }) => {
   })
 }
 
-module.exports = { sendOtpEmail, sendOrderStatusEmail, sendPrivacyRequestEmail }
+const sendTrustSafetyAlert = async ({ reportId, listingId, reason, priority, triageDueAt }) => {
+  const to = String(process.env.TRUST_SAFETY_EMAIL || '').trim()
+  const mailer = getTransporter()
+  if (!to || !mailer) {
+    logger.warn({
+      type: 'TRUST_SAFETY_ALERT_SKIPPED',
+      reportId,
+      priority,
+      message: 'Configure TRUST_SAFETY_EMAIL and SMTP before public launch.'
+    })
+    return false
+  }
+
+  await mailer.sendMail({
+    from: process.env.SMTP_FROM || process.env.SMTP_USER,
+    to,
+    subject: `[${String(priority).toUpperCase()}] Glory listing report requires triage`,
+    text: `Report ${reportId} concerns listing ${listingId}. Category: ${reason}. First triage is due by ${new Date(triageDueAt).toISOString()}. Open the protected admin queue to review the evidence.`,
+    html: `<div style="font-family:Arial,sans-serif;color:#111;line-height:1.6"><h2>${String(priority).toUpperCase()} listing report</h2><p>Report <strong>${reportId}</strong> concerns listing <strong>${listingId}</strong>.</p><p>Category: ${reason}<br>First triage due: ${new Date(triageDueAt).toISOString()}</p><p>Open the protected Glory admin queue to review the evidence.</p></div>`
+  })
+  return true
+}
+
+module.exports = { sendOtpEmail, sendOrderStatusEmail, sendPrivacyRequestEmail, sendTrustSafetyAlert }
