@@ -2,6 +2,9 @@ const jwt = require('jsonwebtoken')
 const User = require('../models/user')
 const { ACCESS_COOKIE } = require('../utils/authSession')
 const { getMarketplaceConfig } = require('../services/marketplaceService')
+const { getJwtVerificationOptions } = require('../utils/runtimeSecurity')
+
+const SESSION_IDLE_MS = Math.max(60 * 60 * 1000, Number(process.env.SESSION_IDLE_HOURS || 24) * 60 * 60 * 1000)
 
 // Protect any route - must be logged in
 const protect = async (req, res, next) => {
@@ -10,12 +13,12 @@ const protect = async (req, res, next) => {
 
   if (token) {
     try {
-      const decoded = jwt.verify(token, process.env.JWT_SECRET)
+      const decoded = jwt.verify(token, process.env.JWT_SECRET, getJwtVerificationOptions())
       if (decoded.type && decoded.type !== 'access') {
         return res.status(401).json({ message: 'Not authorized, invalid token type' })
       }
       req.user = await User.findById(decoded.id).select(
-        '-password -emailVerification -twoFactor.pending -twoFactor.login -twoFactor.disable'
+        '-password -emailVerification -twoFactor.pending -twoFactor.login -twoFactor.disable +isSuperAdmin'
       )
       if (!req.user) {
         return res.status(401).json({ message: 'User not found' })
@@ -27,6 +30,7 @@ const protect = async (req, res, next) => {
       const activeSession = req.user.authSessions?.find(
         (session) => session.sessionId === decoded.sessionId
           && new Date(session.expiresAt).getTime() > Date.now()
+          && new Date(session.lastUsedAt || session.createdAt).getTime() + SESSION_IDLE_MS > Date.now()
       )
       if (!activeSession) {
         return res.status(401).json({ message: 'Session has expired' })
@@ -43,11 +47,16 @@ const protect = async (req, res, next) => {
 
 // Admin only
 const admin = (req, res, next) => {
-  if (req.user && req.user.isAdmin) {
+  if (req.user && req.user.isAdmin && req.user.twoFactor?.enabled) {
     next()
   } else {
-    res.status(403).json({ message: 'Not authorized as admin' })
+    res.status(403).json({ message: 'Administrator access requires a verified administrator account with two-factor authentication.' })
   }
+}
+
+const superAdmin = (req, res, next) => {
+  if (req.user?.isSuperAdmin && req.user.twoFactor?.enabled) return next()
+  return res.status(403).json({ message: 'Not authorized for administrator role management.' })
 }
 
 // Seller only
@@ -92,4 +101,4 @@ const verifiedSeller = (req, res, next) => {
   return next()
 }
 
-module.exports = { protect, admin, seller, verifiedSeller }
+module.exports = { protect, admin, superAdmin, seller, verifiedSeller }

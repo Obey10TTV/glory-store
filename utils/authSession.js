@@ -1,5 +1,6 @@
 const crypto = require('crypto')
 const jwt = require('jsonwebtoken')
+const { getJwtSigningOptions } = require('./runtimeSecurity')
 
 const ACCESS_COOKIE = 'glory_access'
 const REFRESH_COOKIE = 'glory_refresh'
@@ -19,7 +20,7 @@ const cookieOptions = (httpOnly = true) => ({
 const createAccessToken = (userId, sessionId) => jwt.sign(
   { id: userId, sessionId, type: 'access' },
   process.env.JWT_SECRET,
-  { expiresIn: ACCESS_TOKEN_TTL }
+  { expiresIn: ACCESS_TOKEN_TTL, ...getJwtSigningOptions() }
 )
 
 const createRefreshToken = () => crypto.randomBytes(48).toString('base64url')
@@ -50,6 +51,7 @@ const createSession = (req) => {
       ipHash,
       createdAt: new Date(),
       lastUsedAt: new Date(),
+      lastAuthenticatedAt: new Date(),
       expiresAt,
     }
   }

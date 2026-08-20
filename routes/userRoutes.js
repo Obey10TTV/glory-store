@@ -47,15 +47,6 @@ const {
   setAuthCookies,
 } = require('../utils/authSession')
 
-// Admin-only middleware for this file
-const adminOnly = (req, res, next) => {
-  if (req.user && req.user.isAdmin) {
-    return next()
-  }
-
-  return res.status(403).json({ message: 'Not authorized as admin' })
-}
-
 const getAuthPayload = (user) => {
   const safeUser = typeof user.toJSON === 'function' ? user.toJSON() : user
   return {
@@ -660,40 +651,10 @@ router.post('/2fa/recovery/confirm', protect, validateOtpOnly, handleValidationE
   }
 })
 
-// MAKE USER ADMIN
-// Protected: only existing admins can make another user admin/seller
-router.put('/makeadmin', protect, adminOnly, async (req, res) => {
-  try {
-    const { email } = req.body
-
-    if (!email) {
-      return res.status(400).json({ message: 'Email is required' })
-    }
-
-    const user = await User.findOne({ email })
-
-    if (!user) {
-      return res.status(404).json({ message: 'User not found' })
-    }
-
-    user.isAdmin = true
-    user.isSeller = true
-
-    await user.save()
-
-    res.json({
-      message: 'User is now admin and seller',
-      user: {
-        _id: user._id,
-        name: user.name,
-        email: user.email,
-        isSeller: user.isSeller,
-        isAdmin: user.isAdmin
-      }
-    })
-  } catch (error) {
-    res.status(500).json({ message: error.message })
-  }
+// Role elevation is deliberately not available through the general account API.
+// Super-admin role changes live in the dedicated audited admin route.
+router.put('/makeadmin', protect, (req, res) => {
+  res.status(410).json({ message: 'This endpoint has been retired. Use the audited administrator role-management workflow.' })
 })
 
 // GET PROFILE

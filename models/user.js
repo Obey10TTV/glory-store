@@ -1,6 +1,8 @@
 const mongoose = require('mongoose')
 const bcrypt = require('bcryptjs')
 
+const BCRYPT_ROUNDS = Math.max(12, Number(process.env.BCRYPT_ROUNDS || 12))
+
 const otpChallengeSchema = new mongoose.Schema({
   codeHash: {
     type: String,
@@ -24,6 +26,7 @@ const authSessionSchema = new mongoose.Schema({
   ipHash: { type: String, default: '' },
   createdAt: { type: Date, default: Date.now },
   lastUsedAt: { type: Date, default: Date.now },
+  lastAuthenticatedAt: { type: Date, default: Date.now },
   expiresAt: { type: Date, required: true },
 }, { _id: false })
 
@@ -124,6 +127,11 @@ const userSchema = new mongoose.Schema({
   isAdmin: {
     type: Boolean,
     default: false
+  },
+  isSuperAdmin: {
+    type: Boolean,
+    default: false,
+    select: false
   },
   avatar: {
     type: String,
@@ -385,6 +393,7 @@ const userSchema = new mongoose.Schema({
 const removeSensitiveFields = (ret) => {
   delete ret.password
   delete ret.googleSubject
+  delete ret.isSuperAdmin
   delete ret.emailVerification
   delete ret.authSessions
   ret.twoFactorEnabled = Boolean(ret.twoFactor?.enabled)
@@ -425,7 +434,7 @@ userSchema.pre('save', async function() {
   if (!this.isModified('password') || !this.password) {
     return
   }
-  const salt = await bcrypt.genSalt(10)
+  const salt = await bcrypt.genSalt(BCRYPT_ROUNDS)
   this.password = await bcrypt.hash(this.password, salt)
 })
 

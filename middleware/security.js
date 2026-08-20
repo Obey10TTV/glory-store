@@ -1,6 +1,8 @@
 const rateLimit = require('express-rate-limit')
+const { ipKeyGenerator } = require('express-rate-limit')
 const hpp = require('hpp')
 const xss = require('xss')
+const crypto = require('crypto')
 const { body, validationResult } = require('express-validator')
 const { isCosmeticsCategory, isValidProductType } = require('../utils/catalogTaxonomy')
 
@@ -45,10 +47,39 @@ const authLimiter = rateLimit({
   legacyHeaders: false
 })
 
+// A per-account limit remains effective when an attacker rotates IP addresses.
+// The HMAC key avoids retaining raw email addresses in the limiter store.
+const accountRateLimitKey = (req) => {
+  const email = String(req.body?.email || '').trim().toLowerCase()
+  const key = process.env.RATE_LIMIT_KEY_SECRET || process.env.JWT_SECRET || 'glory-local-rate-limit'
+  const digest = crypto.createHmac('sha256', key)
+    .update(email || ipKeyGenerator(req.ip || 'unknown'))
+    .digest('hex')
+  return `account:${digest}`
+}
+
+const authAccountLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 8,
+  keyGenerator: accountRateLimitKey,
+  message: { message: 'Too many attempts for this account. Please try again later.' },
+  standardHeaders: true,
+  legacyHeaders: false
+})
+
 const otpLimiter = rateLimit({
   windowMs: 10 * 60 * 1000,
   max: 8,
   message: { message: 'Too many verification attempts, please try again after 10 minutes.' },
+  standardHeaders: true,
+  legacyHeaders: false
+})
+
+const otpAccountLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 5,
+  keyGenerator: accountRateLimitKey,
+  message: { message: 'Too many verification attempts for this account. Please try again later.' },
   standardHeaders: true,
   legacyHeaders: false
 })
@@ -144,6 +175,12 @@ const ipProtection = (req, res, next) => {
   const now = Date.now()
   const windowMs = 60 * 1000 // 1 minute
   
+  // Keep local protective state bounded. Production must use a shared limiter store.
+  if (requestCounts.size > 10000 && !requestCounts.has(ip)) {
+    const oldest = requestCounts.keys().next().value
+    requestCounts.delete(oldest)
+  }
+
   if (!requestCounts.has(ip)) {
     requestCounts.set(ip, [])
   }
@@ -740,7 +777,9 @@ const hppProtection = hpp({
 module.exports = {
   generalLimiter,
   authLimiter,
+  authAccountLimiter,
   otpLimiter,
+  otpAccountLimiter,
   uploadLimiter,
   paymentLimiter,
   conversationLimiter,

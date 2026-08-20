@@ -7,7 +7,7 @@ const Order = require('../models/order')
 const AuditLog = require('../models/auditLog')
 const Promotion = require('../models/promotion')
 const cloudinary = require('cloudinary').v2
-const { protect, admin } = require('../middleware/auth')
+const { protect, admin, superAdmin } = require('../middleware/auth')
 const { aggregateOrderStatus, recordConfirmedRefund, releaseOrderInventory } = require('../services/orderService')
 const { getMarketplaceConfig } = require('../services/marketplaceService')
 const { enforceSellerPlanVisibility } = require('../services/sellerPlanEnforcementService')
@@ -75,7 +75,7 @@ router.delete('/users/:id', protect, admin, async (req, res) => {
 })
 
 // MAKE USER ADMIN - PUT /api/admin/users/:id/makeadmin
-router.put('/users/:id/makeadmin', protect, admin, async (req, res) => {
+router.put('/users/:id/makeadmin', protect, superAdmin, async (req, res) => {
   try {
     const user = await User.findById(req.params.id)
     if (!user) {
@@ -83,6 +83,10 @@ router.put('/users/:id/makeadmin', protect, admin, async (req, res) => {
     }
     user.isAdmin = true
     await user.save()
+    await recordAudit(req, {
+      action: 'administrator_granted', entityType: 'user', entityId: user._id.toString(),
+      summary: `Administrator role granted to ${user._id}`
+    })
     res.json({ message: 'User is now an admin' })
   } catch (error) {
     res.status(500).json({ message: error.message })
@@ -98,6 +102,10 @@ router.put('/users/:id/makeseller', protect, admin, async (req, res) => {
     }
     user.isSeller = true
     await user.save()
+    await recordAudit(req, {
+      action: 'seller_granted', entityType: 'seller', entityId: user._id.toString(),
+      summary: `Seller role granted to ${user._id}`
+    })
     res.json({ message: 'User is now a seller' })
   } catch (error) {
     res.status(500).json({ message: error.message })

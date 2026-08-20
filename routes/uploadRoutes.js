@@ -8,6 +8,7 @@ const {
   SELLER_DOCUMENT_TYPES,
   isValidSellerDocumentKind
 } = require('../utils/sellerVerification')
+const { fileMatchesAllowedType, safeOriginalName } = require('../utils/fileValidation')
 
 // Configure Cloudinary
 cloudinary.config({
@@ -23,7 +24,7 @@ const upload = multer({
   storage,
   limits: { fileSize: 5 * 1024 * 1024 }, // 5MB max
   fileFilter: (req, file, cb) => {
-    if (file.mimetype.startsWith('image/')) {
+    if (['image/jpeg', 'image/png', 'image/webp'].includes(file.mimetype)) {
       cb(null, true)
     } else {
       cb(new Error('Only image files are allowed'))
@@ -71,6 +72,9 @@ router.post('/', protect, runUpload(upload.single('image')), async (req, res) =>
     if (!req.file) {
       return res.status(400).json({ message: 'No image file provided' })
     }
+    if (!fileMatchesAllowedType(req.file, ['image/jpeg', 'image/png', 'image/webp'])) {
+      return res.status(400).json({ message: 'Upload a valid JPG, PNG or WebP image.' })
+    }
 
     // Convert buffer to base64
     const fileStr = `data:${req.file.mimetype};base64,${req.file.buffer.toString('base64')}`
@@ -78,6 +82,7 @@ router.post('/', protect, runUpload(upload.single('image')), async (req, res) =>
     // Upload to Cloudinary
     const uploadResponse = await cloudinary.uploader.upload(fileStr, {
       folder: 'glory-store',
+      resource_type: 'image',
       transformation: [
         { width: 800, height: 800, crop: 'limit' },
         { quality: 'auto' },
@@ -87,12 +92,11 @@ router.post('/', protect, runUpload(upload.single('image')), async (req, res) =>
 
     res.json({
       message: 'Image uploaded successfully',
-      url: uploadResponse.secure_url,
-      public_id: uploadResponse.public_id
+      url: uploadResponse.secure_url
     })
 
   } catch (error) {
-    res.status(500).json({ message: error.message })
+    res.status(500).json({ message: 'Image upload could not be completed.' })
   }
 })
 
@@ -113,6 +117,9 @@ router.post('/seller-document', protect, runUpload(sellerDocumentUpload.single('
     }
     if (!req.file) {
       return res.status(400).json({ message: 'No verification document provided' })
+    }
+    if (!fileMatchesAllowedType(req.file, ['application/pdf', 'image/jpeg', 'image/png', 'image/webp'])) {
+      return res.status(400).json({ message: 'Upload a valid PDF, JPG, PNG or WebP document.' })
     }
 
     const resourceType = req.file.mimetype === 'application/pdf' ? 'raw' : 'image'
@@ -138,7 +145,7 @@ router.post('/seller-document', protect, runUpload(sellerDocumentUpload.single('
       existing.kind = documentKind
       existing.resourceType = resourceType
       existing.format = uploaded.format || (resourceType === 'raw' ? 'pdf' : '')
-      existing.originalName = req.file.originalname
+      existing.originalName = safeOriginalName(req.file.originalname)
       existing.mimeType = req.file.mimetype
       existing.status = 'pending'
       existing.note = ''
@@ -152,7 +159,7 @@ router.post('/seller-document', protect, runUpload(sellerDocumentUpload.single('
         publicId: uploaded.public_id,
         resourceType,
         format: uploaded.format || (resourceType === 'raw' ? 'pdf' : ''),
-        originalName: req.file.originalname,
+        originalName: safeOriginalName(req.file.originalname),
         mimeType: req.file.mimetype
       })
     }
@@ -173,13 +180,18 @@ router.post('/seller-document', protect, runUpload(sellerDocumentUpload.single('
       }
     })
   } catch (error) {
-    res.status(error instanceof multer.MulterError ? 400 : 500).json({ message: error.message })
+    res.status(error instanceof multer.MulterError ? 400 : 500).json({
+      message: error instanceof multer.MulterError ? 'The uploaded document does not meet the allowed size or format.' : 'Document upload could not be completed.'
+    })
   }
 })
 
 router.post('/promotion-media', protect, verifiedSeller, runUpload(promotionMediaUpload.single('media')), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ message: 'Choose a campaign video' })
+    if (!fileMatchesAllowedType(req.file, ['video/mp4', 'video/webm'])) {
+      return res.status(400).json({ message: 'Upload a valid MP4 or WebM campaign video.' })
+    }
 
     const uploaded = await uploadBuffer(req.file.buffer, {
       folder: `glory-store/promotions/${req.user._id}`,
@@ -193,7 +205,6 @@ router.post('/promotion-media', protect, verifiedSeller, runUpload(promotionMedi
     res.status(201).json({
       message: 'Campaign media uploaded for review',
       url: uploaded.secure_url,
-      publicId: uploaded.public_id,
       mediaType: 'video'
     })
   } catch (error) {

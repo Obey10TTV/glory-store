@@ -26,7 +26,9 @@ const marketplaceRoutes = require('./routes/marketplaceRoutes')
 const {
   generalLimiter,
   authLimiter,
+  authAccountLimiter,
   otpLimiter,
+  otpAccountLimiter,
   uploadLimiter,
   paymentLimiter,
   sanitizeInput,
@@ -35,8 +37,10 @@ const {
   hppProtection
 } = require('./middleware/security')
 
-const { httpLogger, logger } = require('./middleware/logger')
+const { httpLogger, logger, sanitizeErrorMessage } = require('./middleware/logger')
 const { csrfProtection } = require('./middleware/csrf')
+const { getAllowedOrigins, requireTrustedBrowserOrigin } = require('./utils/originPolicy')
+const { assertProductionSecurityConfig } = require('./utils/runtimeSecurity')
 const { releaseExpiredReservations } = require('./services/reservationService')
 const { migrateLegacyProductReviews } = require('./services/reviewMigrationService')
 const { migrateLegacyMarketplaceRecords } = require('./services/marketMigrationService')
@@ -44,26 +48,8 @@ const { migrateLegacyMarketplaceRecords } = require('./services/marketMigrationS
 const app = express()
 app.disable('x-powered-by')
 
-const fallbackAllowedOrigins = [
-  'http://localhost:3000',
-  'http://localhost:3001',
-  'http://127.0.0.1:3000',
-  'http://127.0.0.1:3001',
-  'https://glory-ca.vercel.app'
-]
-
-const configuredOrigins = [
-  process.env.CLIENT_ORIGIN,
-  process.env.CLIENT_URL,
-  process.env.FRONTEND_URL,
-  process.env.CORS_ORIGIN,
-  process.env.CORS_ORIGINS
-]
-  .flatMap((value) => (value || '').split(','))
-  .map((value) => value.trim().replace(/\/$/, ''))
-  .filter(Boolean)
-
-const allowedOrigins = [...new Set([...configuredOrigins, ...fallbackAllowedOrigins])]
+assertProductionSecurityConfig()
+const allowedOrigins = getAllowedOrigins()
 
 const corsOptions = {
   origin: (origin, callback) => {
@@ -97,6 +83,19 @@ app.use((req, res, next) => {
   res.setHeader('X-Request-ID', req.requestId)
   next()
 })
+
+// Individual route handlers may use contextual internal messages. Never allow one
+// of those messages to become a production response with infrastructure details.
+app.use((req, res, next) => {
+  const json = res.json.bind(res)
+  res.json = (payload) => {
+    if (process.env.NODE_ENV === 'production' && res.statusCode >= 500 && payload?.message) {
+      return json({ message: 'Something went wrong on our end.', requestId: req.requestId })
+    }
+    return json(payload)
+  }
+  next()
+})
 app.use(httpLogger)
 
 // 3. Security headers
@@ -118,6 +117,7 @@ app.use(helmet({
 
 // 5. CORS
 app.use(cors(corsOptions))
+app.use(requireTrustedBrowserOrigin)
 
 // Paystack signatures require the unparsed request bytes.
 app.post('/api/paystack/webhook', express.raw({ type: 'application/json' }), paystackRoutes.handleWebhook)
@@ -125,8 +125,8 @@ app.post('/api/paystack/webhook', express.raw({ type: 'application/json' }), pay
 app.post('/api/stripe/webhook', express.raw({ type: 'application/json' }), stripeRoutes.handleWebhook)
 
 // 6. Body parser
-app.use(express.json({ limit: '10mb' }))
-app.use(express.urlencoded({ extended: true, limit: '10mb' }))
+app.use(express.json({ limit: '256kb', strict: true }))
+app.use(express.urlencoded({ extended: true, limit: '64kb', parameterLimit: 100 }))
 app.use(cookieParser())
 
 // 7. MongoDB sanitize — NoSQL injection prevention
@@ -143,6 +143,16 @@ app.use(ipProtection)
 
 // 11. General rate limiter
 app.use(generalLimiter)
+
+// Authenticated or financial data must never be shared through a browser or CDN cache.
+app.use([
+  '/api/users', '/api/admin', '/api/orders', '/api/upload', '/api/conversations',
+  '/api/reports', '/api/reviews', '/api/paystack', '/api/stripe'
+], (req, res, next) => {
+  res.setHeader('Cache-Control', 'no-store, private')
+  res.setHeader('Pragma', 'no-cache')
+  next()
+})
 
 // Every state-changing API request must carry the matching CSRF token.
 app.use('/api', csrfProtection)
@@ -175,11 +185,16 @@ connectDatabase()
 
 // ── ROUTES WITH SPECIFIC LIMITERS ──
 app.use('/api/users/login', authLimiter)
+app.use('/api/users/login', authAccountLimiter)
 app.use('/api/users/register', authLimiter)
+app.use('/api/users/register', authAccountLimiter)
 app.use('/api/users/google', authLimiter)
 app.use('/api/users/verify-email', otpLimiter)
+app.use('/api/users/verify-email', otpAccountLimiter)
 app.use('/api/users/resend-verification', otpLimiter)
+app.use('/api/users/resend-verification', otpAccountLimiter)
 app.use('/api/users/2fa', otpLimiter)
+app.use('/api/users/2fa', otpAccountLimiter)
 app.use('/api/users', userRoutes)
 app.use('/api/products', productRoutes)
 app.use('/api/orders', orderRoutes)
@@ -233,9 +248,9 @@ app.use((req, res) => {
 // ── GLOBAL ERROR HANDLER ──
 app.use((err, req, res, next) => {
   logger.error({
-    message: err.message,
-    stack: err.stack,
-    url: req.url,
+    message: sanitizeErrorMessage(err.message),
+    stack: process.env.NODE_ENV === 'production' ? undefined : err.stack,
+    path: req.path,
     method: req.method,
     ip: req.ip,
     requestId: req.requestId
@@ -256,6 +271,11 @@ const server = app.listen(PORT, HOST, () => {
   logger.info(`Glory Store server running on ${HOST}:${PORT}`)
 })
 
+server.requestTimeout = 30_000
+server.headersTimeout = 35_000
+server.keepAliveTimeout = 5_000
+server.maxRequestsPerSocket = 1_000
+
 const reservationTimer = setInterval(() => {
   releaseExpiredReservations().catch((error) => {
     logger.error({ type: 'RESERVATION_SWEEP_FAILED', message: error.message })
@@ -264,11 +284,19 @@ const reservationTimer = setInterval(() => {
 reservationTimer.unref()
 
 process.on('unhandledRejection', (error) => {
-  logger.error({ type: 'UNHANDLED_REJECTION', message: error?.message, stack: error?.stack })
+  logger.error({
+    type: 'UNHANDLED_REJECTION',
+    message: sanitizeErrorMessage(error?.message),
+    stack: process.env.NODE_ENV === 'production' ? undefined : error?.stack
+  })
 })
 
 process.on('uncaughtException', (error) => {
-  logger.error({ type: 'UNCAUGHT_EXCEPTION', message: error.message, stack: error.stack })
+  logger.error({
+    type: 'UNCAUGHT_EXCEPTION',
+    message: sanitizeErrorMessage(error.message),
+    stack: process.env.NODE_ENV === 'production' ? undefined : error.stack
+  })
   server.close(() => process.exit(1))
   setTimeout(() => process.exit(1), 5000).unref()
 })
