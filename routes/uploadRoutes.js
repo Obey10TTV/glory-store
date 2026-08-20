@@ -2,7 +2,7 @@ const express = require('express')
 const router = express.Router()
 const cloudinary = require('cloudinary').v2
 const multer = require('multer')
-const { protect } = require('../middleware/auth')
+const { protect, verifiedSeller } = require('../middleware/auth')
 const User = require('../models/user')
 const {
   SELLER_DOCUMENT_TYPES,
@@ -37,6 +37,16 @@ const sellerDocumentUpload = multer({
   fileFilter: (req, file, cb) => {
     const allowedTypes = ['application/pdf', 'image/jpeg', 'image/png', 'image/webp']
     cb(allowedTypes.includes(file.mimetype) ? null : new Error('Only PDF, JPG, PNG or WebP documents are allowed'), allowedTypes.includes(file.mimetype))
+  }
+})
+
+const promotionMediaUpload = multer({
+  storage,
+  limits: { fileSize: 25 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    const allowedTypes = ['video/mp4', 'video/webm']
+    const allowed = allowedTypes.includes(file.mimetype)
+    cb(allowed ? null : new Error('Use an MP4 or WebM campaign video'), allowed)
   }
 })
 
@@ -164,6 +174,32 @@ router.post('/seller-document', protect, runUpload(sellerDocumentUpload.single('
     })
   } catch (error) {
     res.status(error instanceof multer.MulterError ? 400 : 500).json({ message: error.message })
+  }
+})
+
+router.post('/promotion-media', protect, verifiedSeller, runUpload(promotionMediaUpload.single('media')), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ message: 'Choose a campaign video' })
+
+    const uploaded = await uploadBuffer(req.file.buffer, {
+      folder: `glory-store/promotions/${req.user._id}`,
+      resource_type: 'video',
+      use_filename: false,
+      unique_filename: true,
+      eager: [{ width: 1440, crop: 'limit', quality: 'auto' }],
+      eager_async: true
+    })
+
+    res.status(201).json({
+      message: 'Campaign media uploaded for review',
+      url: uploaded.secure_url,
+      publicId: uploaded.public_id,
+      mediaType: 'video'
+    })
+  } catch (error) {
+    res.status(error instanceof multer.MulterError ? 400 : 500).json({
+      message: error instanceof multer.MulterError ? error.message : 'Campaign media could not be uploaded'
+    })
   }
 })
 

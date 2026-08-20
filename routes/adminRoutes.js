@@ -5,6 +5,7 @@ const User = require('../models/user')
 const Product = require('../models/product')
 const Order = require('../models/order')
 const AuditLog = require('../models/auditLog')
+const Promotion = require('../models/promotion')
 const cloudinary = require('cloudinary').v2
 const { protect, admin } = require('../middleware/auth')
 const { aggregateOrderStatus, recordConfirmedRefund, releaseOrderInventory } = require('../services/orderService')
@@ -556,6 +557,61 @@ router.get('/audit', protect, admin, async (req, res) => {
     res.json({ items, pagination: { page, limit, total, pages: Math.max(1, Math.ceil(total / limit)) } })
   } catch (error) {
     res.status(500).json({ message: 'Unable to load audit history' })
+  }
+})
+
+router.get('/promotions', protect, admin, async (req, res) => {
+  try {
+    const query = {}
+    if (req.query.market) query.marketCode = String(req.query.market).trim().toUpperCase()
+    if (req.query.reviewStatus) query.creativeReviewStatus = String(req.query.reviewStatus).trim().toLowerCase()
+    const promotions = await Promotion.find(query)
+      .populate('seller', 'name email sellerProfile.brandName sellerProfile.storeName sellerProfile.verificationStatus')
+      .populate('listing', 'name image brand category approvalStatus marketCode currency')
+      .sort({ createdAt: -1 })
+      .limit(100)
+    res.json(promotions)
+  } catch (error) {
+    res.status(500).json({ message: 'Unable to load promotion reviews.' })
+  }
+})
+
+router.put('/promotions/:id/creative-review', protect, admin, async (req, res) => {
+  try {
+    const decision = String(req.body.decision || '').trim().toLowerCase()
+    const note = String(req.body.note || '').trim()
+    if (!['approved', 'rejected'].includes(decision)) {
+      return res.status(400).json({ message: 'Choose approved or rejected.' })
+    }
+    if (note.length > 300) return res.status(400).json({ message: 'Review note must be 300 characters or less.' })
+
+    const promotion = await Promotion.findOne({
+      _id: req.params.id,
+      placement: 'homepage_video',
+      status: 'pending_review',
+      creativeReviewStatus: 'pending'
+    })
+    if (!promotion) return res.status(404).json({ message: 'Pending video campaign not found.' })
+
+    promotion.creativeReviewStatus = decision
+    promotion.creativeReviewNote = note
+    promotion.status = decision === 'approved' ? 'approved_for_payment' : 'cancelled'
+    if (decision === 'rejected') promotion.failureReason = note || 'Campaign creative did not meet Glory advertising requirements.'
+    await promotion.save()
+    await recordAudit(req, {
+      action: `homepage_video_${decision}`,
+      entityType: 'promotion',
+      entityId: promotion._id.toString(),
+      summary: `${decision === 'approved' ? 'Approved for payment' : 'Rejected'}: ${promotion.creativeHeadline}`
+    })
+    res.json({
+      message: decision === 'approved'
+        ? 'Creative approved. The seller can now pay and schedule the campaign.'
+        : 'Creative rejected before payment.',
+      promotion
+    })
+  } catch (error) {
+    res.status(500).json({ message: 'Unable to review this campaign.' })
   }
 })
 

@@ -200,6 +200,10 @@ const validateRegister = [
       }
       return true
     }),
+  body('marketCode')
+    .optional()
+    .isIn(['NG', 'GB', 'US', 'CA'])
+    .withMessage('Choose an available Glory market'),
 ]
 
 const validateUpdateProfile = [
@@ -253,6 +257,10 @@ const validateGoogleAuth = [
       }
       return true
     }),
+  body('marketCode')
+    .optional()
+    .isIn(['NG', 'GB', 'US', 'CA'])
+    .withMessage('Choose an available Glory market'),
 ]
 
 const validateGoogleLink = [
@@ -416,6 +424,18 @@ const validateProduct = [
     .optional()
     .isInt({ min: 0, max: 1000 })
     .withMessage('Low-stock threshold must be between 0 and 1000'),
+  body('marketCode')
+    .optional()
+    .isIn(['NG', 'GB', 'US', 'CA'])
+    .withMessage('Choose an available Glory market'),
+  body('acceptedPaymentMethods')
+    .optional()
+    .isArray({ min: 1, max: 5 })
+    .withMessage('Choose at least one supported seller payment method'),
+  body('acceptedPaymentMethods.*')
+    .optional()
+    .isIn(['card', 'bank_transfer', 'ussd', 'crypto', 'cash_on_delivery'])
+    .withMessage('Unsupported seller payment method'),
   body('listingEvidence')
     .isObject()
     .withMessage('Listing evidence is required before review'),
@@ -506,10 +526,37 @@ const validatePromotionCheckout = [
   body('listingId')
     .isMongoId()
     .withMessage('Choose a valid approved listing'),
+  body('promotionId')
+    .optional({ checkFalsy: true })
+    .isMongoId()
+    .withMessage('Choose a valid approved campaign'),
   body('planCode')
     .trim()
     .matches(/^[a-z0-9_]{3,60}$/)
     .withMessage('Choose a valid promotion plan'),
+  body('marketCode')
+    .optional()
+    .isIn(['NG', 'GB', 'US', 'CA'])
+    .withMessage('Choose an available Glory market'),
+  body('creativeHeadline')
+    .optional({ checkFalsy: true })
+    .trim()
+    .isLength({ min: 4, max: 100 })
+    .withMessage('Video campaign headline must be between 4 and 100 characters'),
+  body('creativeCopy')
+    .optional({ checkFalsy: true })
+    .trim()
+    .isLength({ min: 12, max: 220 })
+    .withMessage('Video campaign copy must be between 12 and 220 characters'),
+  body('creativeMediaUrl')
+    .optional({ checkFalsy: true })
+    .isURL({ protocols: ['https'], require_protocol: true })
+    .withMessage('Upload a secure campaign video first'),
+  body('creativeCtaLabel')
+    .optional({ checkFalsy: true })
+    .trim()
+    .isLength({ min: 2, max: 40 })
+    .withMessage('Campaign button label must be between 2 and 40 characters'),
 ]
 
 const validateOrder = [
@@ -637,12 +684,16 @@ const validateSellerProfile = [
     .withMessage('Choose a valid response time commitment'),
   body('acceptedPaymentMethods')
     .optional()
-    .isArray({ min: 1, max: 3 })
+    .isArray({ min: 1, max: 5 })
     .withMessage('Choose at least one supported payment method'),
   body('acceptedPaymentMethods.*')
     .optional()
-    .isIn(['card', 'bank_transfer', 'crypto'])
+    .isIn(['card', 'bank_transfer', 'ussd', 'crypto', 'cash_on_delivery'])
     .withMessage('Unsupported payment method'),
+  body('marketCode')
+    .optional()
+    .isIn(['NG', 'GB', 'US', 'CA'])
+    .withMessage('Choose an available Glory market'),
   body('submitForReview')
     .optional()
     .isBoolean()

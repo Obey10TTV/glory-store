@@ -100,7 +100,8 @@ const orderSchema = new mongoose.Schema({
     reference: String
   },
   paymentReference: { type: String, trim: true, index: true, sparse: true },
-  currency: { type: String, enum: ['GBP'], default: 'GBP' },
+  marketCode: { type: String, enum: ['NG', 'GB', 'US', 'CA'], default: 'GB' },
+  currency: { type: String, enum: ['NGN', 'GBP', 'USD', 'CAD'], default: 'GBP' },
   itemsPricePence: { type: Number, required: true, default: 0, min: 0 },
   shippingPricePence: { type: Number, required: true, default: 0, min: 0 },
   totalPricePence: { type: Number, required: true, default: 0, min: 0 },

@@ -33,6 +33,11 @@ const { sendOtpEmail, sendPrivacyRequestEmail } = require('../utils/email')
 const { recordAudit } = require('../utils/audit')
 const { getRequiredSellerDocumentTypes, hasVerifiedSellerIdentity } = require('../utils/sellerVerification')
 const {
+  getMarketplaceConfig,
+  normalizeMarketCode,
+  normalizePaymentMethods
+} = require('../services/marketplaceService')
+const {
   REFRESH_COOKIE,
   clearAuthCookies,
   createRefreshToken,
@@ -251,6 +256,8 @@ router.post('/logout', async (req, res) => {
 router.post('/register', validateRegister, handleValidationErrors, async (req, res) => {
   try {
     const { name, email, password, isSeller, brandName } = req.body
+    const marketCode = normalizeMarketCode(req.body.marketCode, 'NG')
+    const marketplace = getMarketplaceConfig(marketCode)
 
     const userExists = await User.findOne({ email })
 
@@ -274,7 +281,12 @@ router.post('/register', validateRegister, handleValidationErrors, async (req, r
       isSeller: isSeller || false,
       isEmailVerified: false,
       sellerProfile: isSeller ? {
-        brandName: String(brandName || '').trim()
+        brandName: String(brandName || '').trim(),
+        marketCode,
+        country: marketplace.marketName,
+        activationCurrency: marketplace.currency,
+        membershipCurrency: marketplace.currency,
+        acceptedPaymentMethods: ['card']
       } : undefined
     })
 
@@ -350,6 +362,8 @@ router.post('/google', validateGoogleAuth, handleValidationErrors, async (req, r
         })
       }
 
+      const marketCode = normalizeMarketCode(req.body.marketCode, 'NG')
+      const marketplace = getMarketplaceConfig(marketCode)
       user = await User.create({
         name: profile.name,
         email: profile.email,
@@ -358,7 +372,12 @@ router.post('/google', validateGoogleAuth, handleValidationErrors, async (req, r
         isEmailVerified: true,
         isSeller: req.body.isSeller === true,
         sellerProfile: req.body.isSeller === true ? {
-          brandName: String(req.body.brandName || '').trim()
+          brandName: String(req.body.brandName || '').trim(),
+          marketCode,
+          country: marketplace.marketName,
+          activationCurrency: marketplace.currency,
+          membershipCurrency: marketplace.currency,
+          acceptedPaymentMethods: ['card']
         } : undefined
       })
     } else {
@@ -859,6 +878,7 @@ router.put('/seller-profile', protect, validateSellerProfile, handleValidationEr
       'city',
       'province',
       'country',
+      'marketCode',
       'website',
       'instagram',
       'businessType',
@@ -869,11 +889,35 @@ router.put('/seller-profile', protect, validateSellerProfile, handleValidationEr
       'acceptedPaymentMethods'
     ]
 
+    const currentMarketCode = normalizeMarketCode(user.sellerProfile.marketCode, 'GB')
+    const requestedMarketCode = Object.prototype.hasOwnProperty.call(req.body, 'marketCode')
+      ? normalizeMarketCode(req.body.marketCode, currentMarketCode)
+      : currentMarketCode
+    if (
+      requestedMarketCode !== user.sellerProfile.marketCode
+      && user.sellerProfile.membershipPlanCode !== 'starter'
+      && ['active', 'pending', 'past_due'].includes(user.sellerProfile.membershipStatus)
+    ) {
+      return res.status(409).json({
+        message: 'Change or finish the current paid seller plan before moving this store to another market.'
+      })
+    }
+
     allowedFields.forEach((field) => {
       if (Object.prototype.hasOwnProperty.call(req.body, field)) {
         user.sellerProfile[field] = req.body[field]
       }
     })
+    const marketplace = getMarketplaceConfig(requestedMarketCode)
+    user.sellerProfile.marketCode = requestedMarketCode
+    user.sellerProfile.country = marketplace.marketName
+    user.sellerProfile.activationCurrency = marketplace.currency
+    user.sellerProfile.membershipCurrency = marketplace.currency
+    user.sellerProfile.acceptedPaymentMethods = normalizePaymentMethods(
+      user.sellerProfile.acceptedPaymentMethods,
+      ['card'],
+      requestedMarketCode
+    )
 
     if (req.body.submitForReview) {
       if (!isSellerProfileComplete(user.sellerProfile)) {

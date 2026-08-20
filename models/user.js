@@ -191,6 +191,12 @@ const userSchema = new mongoose.Schema({
       trim: true,
       default: 'United Kingdom'
     },
+    marketCode: {
+      type: String,
+      enum: ['NG', 'GB', 'US', 'CA'],
+      default: 'GB',
+      index: true
+    },
     website: {
       type: String,
       trim: true,
@@ -277,7 +283,7 @@ const userSchema = new mongoose.Schema({
     acceptedPaymentMethods: {
       type: [{
         type: String,
-        enum: ['card', 'bank_transfer', 'crypto']
+        enum: ['card', 'bank_transfer', 'ussd', 'crypto', 'cash_on_delivery']
       }],
       default: ['card']
     },
@@ -293,7 +299,7 @@ const userSchema = new mongoose.Schema({
     },
     activationCurrency: {
       type: String,
-      enum: ['GBP'],
+      enum: ['NGN', 'GBP', 'USD', 'CAD'],
       default: 'GBP'
     },
     activationPaymentReference: {
@@ -317,6 +323,22 @@ const userSchema = new mongoose.Schema({
     membershipCancelAtPeriodEnd: {
       type: Boolean,
       default: false
+    },
+    membershipProvider: {
+      type: String,
+      enum: ['none', 'stripe', 'paystack'],
+      default: 'none'
+    },
+    membershipCurrency: {
+      type: String,
+      enum: ['NGN', 'GBP', 'USD', 'CAD'],
+      default: 'GBP'
+    },
+    membershipPaymentReference: {
+      type: String,
+      trim: true,
+      default: '',
+      select: false
     },
     billingCustomerId: {
       type: String,
@@ -382,6 +404,7 @@ const removeSensitiveFields = (ret) => {
     delete ret.sellerProfile.activationPaymentReference
     delete ret.sellerProfile.billingCustomerId
     delete ret.sellerProfile.billingSubscriptionId
+    delete ret.sellerProfile.membershipPaymentReference
     if (ret.sellerProfile.identityVerification) {
       delete ret.sellerProfile.identityVerification.sessionId
       delete ret.sellerProfile.identityVerification.lastErrorCode

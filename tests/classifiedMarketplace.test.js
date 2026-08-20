@@ -5,6 +5,7 @@ const Promotion = require('../models/promotion')
 const {
   getMarketplaceConfig,
   getPromotionPlan,
+  getPublicMarkets,
   getSellerPlans,
   pricePromotionForSeller
 } = require('../services/marketplaceService')
@@ -52,7 +53,7 @@ test('public product JSON never exposes private listing evidence', () => {
 })
 
 test('homepage promotion pricing is server controlled', () => {
-  const plan = getPromotionPlan('homepage_spotlight_7')
+  const plan = getPromotionPlan('homepage_spotlight_7', 'GB')
   assert.equal(plan.placement, 'homepage_featured')
   assert.equal(plan.currency, 'GBP')
   assert.ok(Number.isInteger(plan.feePence) && plan.feePence >= 100)
@@ -60,7 +61,7 @@ test('homepage promotion pricing is server controlled', () => {
 })
 
 test('seller plans preserve a free entry tier while charging for scale', () => {
-  const plans = getSellerPlans()
+  const plans = getSellerPlans('GB')
   assert.deepEqual(plans.map(plan => plan.code), ['starter', 'studio', 'scale', 'partner'])
   assert.equal(plans[0].feePence, 0)
   assert.equal(plans[0].activeListingLimit, 5)
@@ -70,8 +71,9 @@ test('seller plans preserve a free entry tier while charging for scale', () => {
 })
 
 test('promotion discounts are calculated on the server from an active membership', () => {
-  const plan = getPromotionPlan('homepage_spotlight_7')
+  const plan = getPromotionPlan('homepage_spotlight_7', 'GB')
   const price = pricePromotionForSeller(plan, {
+    marketCode: 'GB',
     membershipPlanCode: 'scale',
     membershipStatus: 'active'
   })
@@ -79,6 +81,17 @@ test('promotion discounts are calculated on the server from an active membership
   assert.equal(price.discountPence, 1780)
   assert.equal(price.feePence, 7120)
   assert.equal(price.sellerPlanCode, 'scale')
+})
+
+test('regional markets own their currencies, billing providers and accessible Nigerian entry tier', () => {
+  assert.deepEqual(getPublicMarkets().map((market) => market.code), ['NG', 'GB', 'US', 'CA'])
+  assert.equal(getMarketplaceConfig('NG').currency, 'NGN')
+  assert.equal(getMarketplaceConfig('NG').billingProvider, 'paystack')
+  assert.equal(getMarketplaceConfig('US').currency, 'USD')
+  assert.equal(getMarketplaceConfig('CA').currency, 'CAD')
+  assert.equal(getSellerPlans('NG')[0].activeListingLimit, 10)
+  assert.equal(getSellerPlans('NG')[1].feeMinor, 750000)
+  assert.equal(getPromotionPlan('homepage_video_7', 'NG').feeMinor, 2500000)
 })
 
 test('public promotion JSON never exposes payment references', () => {

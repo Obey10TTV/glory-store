@@ -21,6 +21,7 @@ const adminRoutes = require('./routes/adminRoutes')
 const conversationRoutes = require('./routes/conversationRoutes')
 const reportRoutes = require('./routes/reportRoutes')
 const promotionRoutes = require('./routes/promotionRoutes')
+const marketplaceRoutes = require('./routes/marketplaceRoutes')
 
 const {
   generalLimiter,
@@ -38,6 +39,7 @@ const { httpLogger, logger } = require('./middleware/logger')
 const { csrfProtection } = require('./middleware/csrf')
 const { releaseExpiredReservations } = require('./services/reservationService')
 const { migrateLegacyProductReviews } = require('./services/reviewMigrationService')
+const { migrateLegacyMarketplaceRecords } = require('./services/marketMigrationService')
 
 const app = express()
 app.disable('x-powered-by')
@@ -162,6 +164,8 @@ const connectDatabase = async () => {
     logger.info('MongoDB connected successfully')
     const migrated = await migrateLegacyProductReviews()
     if (migrated) logger.info('Legacy product reviews migrated to verified-interaction reviews')
+    const marketsMigrated = await migrateLegacyMarketplaceRecords()
+    if (marketsMigrated) logger.info('Legacy marketplace records migrated to regional markets')
   } catch (err) {
     logger.error('MongoDB connection error:', err)
   }
@@ -187,6 +191,7 @@ app.use('/api/admin', adminRoutes)
 app.use('/api/conversations', conversationRoutes)
 app.use('/api/reports', reportRoutes)
 app.use('/api/promotions', promotionRoutes)
+app.use('/api/marketplace', marketplaceRoutes)
 
 app.get('/api/health', (req, res) => {
   const databaseConnected = mongoose.connection.readyState === 1
@@ -245,7 +250,7 @@ app.use((err, req, res, next) => {
 })
 
 const PORT = process.env.PORT || 5000
-const HOST = process.env.HOST || '0.0.0.0'
+const HOST = process.env.HOST || (process.env.NODE_ENV === 'production' ? '0.0.0.0' : '127.0.0.1')
 
 const server = app.listen(PORT, HOST, () => {
   logger.info(`Glory Store server running on ${HOST}:${PORT}`)

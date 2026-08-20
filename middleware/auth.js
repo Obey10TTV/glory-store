@@ -77,7 +77,7 @@ const verifiedSeller = (req, res, next) => {
     return res.status(403).json({ message: 'Your seller profile must be verified before submitting listings.' })
   }
 
-  const marketplace = getMarketplaceConfig()
+  const marketplace = getMarketplaceConfig(req.user.sellerProfile?.marketCode)
   if (
     marketplace.sellerActivationRequired
     && !['paid', 'waived'].includes(req.user.sellerProfile?.activationStatus)

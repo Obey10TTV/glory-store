@@ -7,13 +7,19 @@ const {
   handleValidationErrors
 } = require('../middleware/security')
 const { canonicalizeProductType } = require('../utils/catalogTaxonomy')
-const { getEffectiveSellerPlan } = require('../services/marketplaceService')
+const {
+  getEffectiveSellerPlan,
+  getMarketplaceConfig,
+  normalizeMarketCode,
+  normalizePaymentMethods
+} = require('../services/marketplaceService')
 const { enforceSellerPlanVisibility } = require('../services/sellerPlanEnforcementService')
 
 const publicSellerFields = [
   'name',
   'sellerProfile.storeName',
   'sellerProfile.brandName',
+  'sellerProfile.marketCode',
   'sellerProfile.verificationStatus',
   'sellerProfile.returnPolicy',
   'sellerProfile.returnPolicyDetail',
@@ -52,6 +58,7 @@ router.get('/', async (req, res) => {
     const page = Math.max(1, Number.parseInt(req.query.page, 10) || 1)
     const limit = Math.min(48, Math.max(1, Number.parseInt(req.query.limit, 10) || 24))
     const query = { approvalStatus: 'approved', planVisibilityStatus: { $ne: 'paused' } }
+    if (req.query.market) query.marketCode = normalizeMarketCode(req.query.market, 'NG')
     const q = String(req.query.q || '').trim().slice(0, 100)
     if (q) {
       const escaped = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
@@ -97,7 +104,11 @@ router.get('/', async (req, res) => {
     const [products, total, categories, brands, productTypes] = await Promise.all([
       productQuery.skip((page - 1) * limit).limit(limit),
       Product.countDocuments(query),
-      Product.distinct('category', { approvalStatus: 'approved', planVisibilityStatus: { $ne: 'paused' } }),
+      Product.distinct('category', {
+        approvalStatus: 'approved',
+        planVisibilityStatus: { $ne: 'paused' },
+        ...(query.marketCode ? { marketCode: query.marketCode } : {})
+      }),
       Product.distinct('brand', facetQuery),
       Product.distinct('productType', facetQuery)
     ])
@@ -152,7 +163,8 @@ router.post('/', protect, verifiedSeller, validateProduct, handleValidationError
     const {
       name, price, compareAtPrice, sku, size, productType, countryOfOrigin,
       barcode, description, ingredients, howToUse, keyBenefits, category,
-      image, images, variants, brand, countInStock, lowStockThreshold, listingEvidence
+      image, images, variants, brand, countInStock, lowStockThreshold, listingEvidence,
+      acceptedPaymentMethods
     } = req.body
     const listingBrand = getSellerListingBrand(req.user, brand)
     const canonicalProductType = canonicalizeProductType(category, productType)
@@ -174,10 +186,23 @@ router.post('/', protect, verifiedSeller, validateProduct, handleValidationError
         })
       }
     }
+    const marketCode = normalizeMarketCode(
+      req.user.isAdmin ? req.body.marketCode : req.user.sellerProfile?.marketCode,
+      'GB'
+    )
+    const marketplace = getMarketplaceConfig(marketCode)
+    const listingPaymentMethods = normalizePaymentMethods(
+      acceptedPaymentMethods,
+      req.user.sellerProfile?.acceptedPaymentMethods || ['card'],
+      marketCode
+    )
     const product = await Product.create({
       name, price, compareAtPrice, sku, size, productType: canonicalProductType, countryOfOrigin,
       barcode, description, ingredients, howToUse, keyBenefits, category,
       image, images, variants, brand: listingBrand, countInStock, lowStockThreshold,
+      marketCode,
+      currency: marketplace.currency,
+      acceptedPaymentMethods: listingPaymentMethods,
       seller: req.user._id,
       approvalStatus: req.user.isAdmin ? 'approved' : 'pending',
       listingEvidence: prepareListingEvidence(listingEvidence, { reviewed: req.user.isAdmin }),
@@ -207,7 +232,7 @@ router.put('/:id', protect, verifiedSeller, validateProduct, handleValidationErr
       'name', 'price', 'compareAtPrice', 'sku', 'size', 'productType',
       'countryOfOrigin', 'barcode', 'description', 'ingredients', 'howToUse',
       'keyBenefits', 'category', 'image', 'images', 'variants', 'brand',
-      'countInStock', 'lowStockThreshold', 'listingEvidence'
+      'countInStock', 'lowStockThreshold', 'listingEvidence', 'acceptedPaymentMethods'
     ]
     allowedFields.forEach((field) => {
       if (Object.prototype.hasOwnProperty.call(req.body, field)) {
@@ -225,6 +250,11 @@ router.put('/:id', protect, verifiedSeller, validateProduct, handleValidationErr
       }
       product.brand = listingBrand
     }
+    product.acceptedPaymentMethods = normalizePaymentMethods(
+      product.acceptedPaymentMethods,
+      req.user.sellerProfile?.acceptedPaymentMethods || ['card'],
+      product.marketCode
+    )
 
     if (!req.user.isAdmin) {
       product.approvalStatus = 'pending'

@@ -13,6 +13,7 @@ const {
   getPromotionPlan,
   getSellerPlan,
   getSellerPlans,
+  normalizeMarketCode,
   pricePromotionForSeller
 } = require('../services/marketplaceService')
 const { validatePromotionCheckout, handleValidationErrors } = require('../middleware/security')
@@ -23,7 +24,7 @@ const {
 } = require('../services/stripeMarketplaceService')
 const { sendOrderStatusEmail } = require('../utils/email')
 const { logger } = require('../middleware/logger')
-const { reserveHomepagePromotion } = require('../services/promotionService')
+const { reserveApprovedPromotion, reserveHomepagePromotion } = require('../services/promotionService')
 const { enforceSellerPlanVisibility } = require('../services/sellerPlanEnforcementService')
 
 const stripe = process.env.STRIPE_SECRET_KEY ? new Stripe(process.env.STRIPE_SECRET_KEY) : null
@@ -66,8 +67,11 @@ const publicSellerPlan = (plan) => ({
   code: plan.code,
   label: plan.label,
   description: plan.description,
+  feeMinor: plan.feeMinor,
   feePence: plan.feePence,
   currency: plan.currency,
+  marketCode: plan.marketCode,
+  billingProvider: plan.billingProvider,
   interval: plan.interval,
   activeListingLimit: plan.activeListingLimit,
   promotionDiscountBps: plan.promotionDiscountBps,
@@ -93,7 +97,8 @@ const applySellerSubscription = async (subscription, fallback = {}) => {
   if (!subscription) return null
   const userId = subscription.metadata?.userId || fallback.userId
   const planCode = subscription.metadata?.planCode || fallback.planCode
-  const plan = getSellerPlan(planCode)
+  const marketCode = normalizeMarketCode(subscription.metadata?.marketCode || fallback.marketCode, 'GB')
+  const plan = getSellerPlan(planCode, marketCode)
   if (!userId || !plan || plan.code === 'starter') {
     throw Object.assign(new Error('Seller plan metadata is incomplete'), { statusCode: 400 })
   }
@@ -103,11 +108,16 @@ const applySellerSubscription = async (subscription, fallback = {}) => {
   if (!user?.isSeller) {
     throw Object.assign(new Error('Seller account not found'), { statusCode: 404 })
   }
+  if (normalizeMarketCode(user.sellerProfile.marketCode, 'GB') !== marketCode) {
+    throw Object.assign(new Error('Seller plan market does not match this store'), { statusCode: 409 })
+  }
 
   user.sellerProfile.membershipPlanCode = plan.code
   user.sellerProfile.membershipStatus = membershipStatusFromStripe(subscription.status)
   user.sellerProfile.membershipCurrentPeriodEnd = stripeSubscriptionPeriodEnd(subscription)
   user.sellerProfile.membershipCancelAtPeriodEnd = Boolean(subscription.cancel_at_period_end)
+  user.sellerProfile.membershipProvider = 'stripe'
+  user.sellerProfile.membershipCurrency = plan.currency
   user.sellerProfile.billingCustomerId = String(subscription.customer || fallback.customerId || '')
   user.sellerProfile.billingSubscriptionId = String(subscription.id || fallback.subscriptionId || '')
   await user.save()
@@ -117,7 +127,8 @@ const applySellerSubscription = async (subscription, fallback = {}) => {
 
 const applySellerSubscriptionSession = async (session) => {
   if (session?.metadata?.purpose !== 'seller_subscription') return null
-  const plan = getSellerPlan(session.metadata?.planCode)
+  const marketCode = normalizeMarketCode(session.metadata?.marketCode, 'GB')
+  const plan = getSellerPlan(session.metadata?.planCode, marketCode)
   if (!plan || plan.code === 'starter') {
     throw Object.assign(new Error('Seller plan is unavailable'), { statusCode: 400 })
   }
@@ -137,6 +148,7 @@ const applySellerSubscriptionSession = async (session) => {
   return applySellerSubscription(subscription, {
     userId: session.metadata?.userId,
     planCode: plan.code,
+    marketCode,
     customerId: session.customer,
     subscriptionId: session.subscription
   })
@@ -189,11 +201,12 @@ const applySellerActivationSession = async (session) => {
     return null
   }
 
-  const marketplace = getMarketplaceConfig()
+  const marketCode = normalizeMarketCode(session.metadata?.marketCode, 'GB')
+  const marketplace = getMarketplaceConfig(marketCode)
   const userId = session.metadata?.userId
   if (!userId) throw Object.assign(new Error('Seller activation metadata is incomplete'), { statusCode: 400 })
   if (
-    session.currency !== 'gbp'
+    session.currency !== String(marketplace.currency).toLowerCase()
     || checkoutSubtotal(session) !== marketplace.sellerActivationFeePence
   ) {
     throw Object.assign(new Error('Seller activation currency or amount does not match'), { statusCode: 400 })
@@ -202,6 +215,9 @@ const applySellerActivationSession = async (session) => {
   const user = await User.findById(userId)
   if (!user?.isSeller) {
     throw Object.assign(new Error('Seller account not found'), { statusCode: 404 })
+  }
+  if (normalizeMarketCode(user.sellerProfile.marketCode, 'GB') !== marketCode) {
+    throw Object.assign(new Error('Seller activation market does not match this store'), { statusCode: 409 })
   }
   if (user.sellerProfile.activationStatus === 'paid') return user
 
@@ -323,9 +339,9 @@ const applyVerifiedOrderSession = async (session) => {
 }
 
 router.get('/status', (req, res) => {
-  const marketplace = getMarketplaceConfig()
+  const marketplace = getMarketplaceConfig(req.query.market)
   res.json({
-    enabled: Boolean(stripe),
+    enabled: marketplace.billingProvider === 'stripe' && Boolean(stripe),
     currency: marketplace.currency,
     sellerActivationRequired: marketplace.sellerActivationRequired,
     sellerActivationFeePence: marketplace.sellerActivationFeePence,
@@ -333,15 +349,15 @@ router.get('/status', (req, res) => {
     marketplaceMode: marketplace.marketplaceMode,
     directCheckoutEnabled: marketplace.directCheckoutEnabled,
     paymentMethods: marketplace.paymentMethods,
-    sellerPlans: getSellerPlans().map(publicSellerPlan)
+    sellerPlans: getSellerPlans(marketplace.marketCode).map(publicSellerPlan)
   })
 })
 
 router.get('/seller/status', protect, async (req, res) => {
   try {
-    const marketplace = getMarketplaceConfig()
     const user = await User.findById(req.user._id)
     if (!user?.isSeller) return res.status(403).json({ message: 'Not authorized as seller' })
+    const marketplace = getMarketplaceConfig(user.sellerProfile.marketCode)
 
     if (stripe && user.sellerProfile.stripeAccountId) {
       const account = await stripe.accounts.retrieve(user.sellerProfile.stripeAccountId)
@@ -351,7 +367,7 @@ router.get('/seller/status', protect, async (req, res) => {
     res.json({
       ...getSellerCommerceStatus(user, marketplace),
       paymentMethods: marketplace.paymentMethods,
-      sellerPlans: getSellerPlans().map(publicSellerPlan)
+      sellerPlans: getSellerPlans(marketplace.marketCode).map(publicSellerPlan)
     })
   } catch (error) {
     res.status(error.statusCode || 500).json({
@@ -465,14 +481,18 @@ router.post('/seller/identity/redact', protect, seller, async (req, res) => {
 router.post('/seller/subscription', protect, seller, async (req, res) => {
   try {
     if (!stripe) return res.status(503).json({ message: 'Seller plan payments are not configured yet' })
-    const plan = getSellerPlan(req.body.planCode)
-    if (!plan || plan.code === 'starter' || !plan.interval) {
-      return res.status(400).json({ message: 'Choose an available paid seller plan.' })
-    }
-
     const user = await User.findById(req.user._id)
       .select('+sellerProfile.billingCustomerId +sellerProfile.billingSubscriptionId')
     if (!user?.isSeller) return res.status(403).json({ message: 'Not authorized as seller' })
+    const marketCode = normalizeMarketCode(user.sellerProfile.marketCode, 'GB')
+    const marketplace = getMarketplaceConfig(marketCode)
+    if (marketplace.billingProvider !== 'stripe') {
+      return res.status(409).json({ message: `Seller plans in ${marketplace.marketName} are billed through ${marketplace.billingProvider}.` })
+    }
+    const plan = getSellerPlan(req.body.planCode, marketCode)
+    if (!plan || plan.code === 'starter' || !plan.interval) {
+      return res.status(400).json({ message: 'Choose an available paid seller plan.' })
+    }
     if (user.isEmailVerified === false || !user.twoFactor?.enabled) {
       return res.status(403).json({ message: 'Verify your email and enable two-factor authentication first' })
     }
@@ -511,13 +531,15 @@ router.post('/seller/subscription', protect, seller, async (req, res) => {
       metadata: {
         purpose: 'seller_subscription',
         userId: user._id.toString(),
-        planCode: plan.code
+        planCode: plan.code,
+        marketCode
       },
       subscription_data: {
         metadata: {
           purpose: 'seller_subscription',
           userId: user._id.toString(),
-          planCode: plan.code
+          planCode: plan.code,
+          marketCode
         }
       },
       ...sellerCheckoutTaxSettings(),
@@ -535,6 +557,8 @@ router.post('/seller/subscription', protect, seller, async (req, res) => {
     })
     user.sellerProfile.membershipPlanCode = plan.code
     user.sellerProfile.membershipStatus = 'pending'
+    user.sellerProfile.membershipProvider = 'stripe'
+    user.sellerProfile.membershipCurrency = plan.currency
     await user.save()
     await AuditLog.create({
       actor: user._id,
@@ -599,9 +623,13 @@ router.post('/seller/activation', protect, async (req, res) => {
   try {
     if (!stripe) return res.status(503).json({ message: 'Seller activation payments are not configured yet' })
 
-    const marketplace = getMarketplaceConfig()
     const user = await User.findById(req.user._id)
     if (!user?.isSeller) return res.status(403).json({ message: 'Not authorized as seller' })
+    const marketCode = normalizeMarketCode(user.sellerProfile.marketCode, 'GB')
+    const marketplace = getMarketplaceConfig(marketCode)
+    if (marketplace.billingProvider !== 'stripe') {
+      return res.status(409).json({ message: `Seller activation in ${marketplace.marketName} is billed through ${marketplace.billingProvider}.` })
+    }
     if (user.isEmailVerified === false || !user.twoFactor?.enabled) {
       return res.status(403).json({ message: 'Verify your email and enable two-factor authentication first' })
     }
@@ -639,7 +667,7 @@ router.post('/seller/activation', protect, async (req, res) => {
       customer_email: user.email,
       line_items: [{
         price_data: {
-          currency: 'gbp',
+          currency: String(marketplace.currency).toLowerCase(),
           unit_amount: marketplace.sellerActivationFeePence,
           product_data: {
             name: 'Glory seller activation',
@@ -650,12 +678,14 @@ router.post('/seller/activation', protect, async (req, res) => {
       }],
       metadata: {
         purpose: 'seller_activation',
-        userId: user._id.toString()
+        userId: user._id.toString(),
+        marketCode
       },
       payment_intent_data: {
         metadata: {
           purpose: 'seller_activation',
-          userId: user._id.toString()
+          userId: user._id.toString(),
+          marketCode
         }
       },
       ...sellerCheckoutTaxSettings(),
@@ -700,8 +730,13 @@ router.post('/seller/promotions/homepage', protect, verifiedSeller, validateProm
   try {
     if (!stripe) return res.status(503).json({ message: 'Promotion payments are not configured yet' })
 
-    const plan = getPromotionPlan(req.body.planCode)
-    if (!plan || plan.placement !== 'homepage_featured') {
+    const marketCode = normalizeMarketCode(req.user.sellerProfile?.marketCode, 'GB')
+    const marketplace = getMarketplaceConfig(marketCode)
+    if (marketplace.billingProvider !== 'stripe') {
+      return res.status(409).json({ message: `Campaigns in ${marketplace.marketName} are billed through ${marketplace.billingProvider}.` })
+    }
+    const plan = getPromotionPlan(req.body.planCode, marketCode)
+    if (!plan) {
       return res.status(400).json({ message: 'That promotion plan is unavailable.' })
     }
     const promotionPrice = pricePromotionForSeller(plan, req.user.sellerProfile)
@@ -709,6 +744,7 @@ router.post('/seller/promotions/homepage', protect, verifiedSeller, validateProm
     const listing = await Product.findOne({
       _id: req.body.listingId,
       seller: req.user._id,
+      marketCode,
       approvalStatus: 'approved',
       planVisibilityStatus: { $ne: 'paused' },
       countInStock: { $gt: 0 }
@@ -721,6 +757,7 @@ router.post('/seller/promotions/homepage', protect, verifiedSeller, validateProm
     const existing = await Promotion.findOne({
       seller: req.user._id,
       listing: listing._id,
+      marketCode,
       placement: plan.placement,
       status: { $in: ['pending_payment', 'active'] }
     }).select('+paymentReference')
@@ -748,22 +785,42 @@ router.post('/seller/promotions/homepage', protect, verifiedSeller, validateProm
       await existing.save()
     }
 
-    promotion = await reserveHomepagePromotion({
-      seller: req.user._id,
-      listing: listing._id,
-      placement: plan.placement,
-      planCode: plan.code,
-      label: plan.label,
-      baseAmountPence: promotionPrice.baseFeePence,
-      discountPence: promotionPrice.discountPence,
-      amountPence: promotionPrice.feePence,
-      sellerPlanCode: promotionPrice.sellerPlanCode,
-      currency: plan.currency,
-      durationDays: plan.durationDays,
-      status: 'pending_payment'
-    })
+    if (plan.placement === 'homepage_video') {
+      const draft = await Promotion.findOne({
+        _id: req.body.promotionId,
+        seller: req.user._id,
+        listing: listing._id,
+        marketCode,
+        planCode: plan.code,
+        status: 'approved_for_payment',
+        creativeReviewStatus: 'approved'
+      })
+      if (!draft) {
+        return res.status(409).json({ message: 'This video campaign must be approved before payment.' })
+      }
+      promotion = await reserveApprovedPromotion(draft._id)
+    } else {
+      promotion = await reserveHomepagePromotion({
+        seller: req.user._id,
+        listing: listing._id,
+        marketCode,
+        placement: plan.placement,
+        planCode: plan.code,
+        label: plan.label,
+        baseAmountPence: promotionPrice.baseFeePence,
+        discountPence: promotionPrice.discountPence,
+        amountPence: promotionPrice.feePence,
+        sellerPlanCode: promotionPrice.sellerPlanCode,
+        currency: plan.currency,
+        durationDays: plan.durationDays,
+        creativeType: 'listing',
+        creativeReviewStatus: 'not_required',
+        paymentProvider: 'stripe',
+        status: 'pending_payment'
+      })
+    }
     if (!promotion) {
-      return res.status(409).json({ message: 'Homepage Spotlight is sold out for the current period. Please try again when a placement becomes available.' })
+      return res.status(409).json({ message: 'This homepage placement is sold out for the current period. Please try again when a slot becomes available.' })
     }
 
     const session = await stripe.checkout.sessions.create({
@@ -772,7 +829,7 @@ router.post('/seller/promotions/homepage', protect, verifiedSeller, validateProm
       line_items: [{
         price_data: {
           currency: String(plan.currency).toLowerCase(),
-          unit_amount: promotionPrice.feePence,
+          unit_amount: promotion.amountPence,
           product_data: {
             name: `Glory ${plan.label}`,
             description: `${plan.durationDays}-day Sponsored homepage placement for ${listing.name}`
@@ -784,14 +841,16 @@ router.post('/seller/promotions/homepage', protect, verifiedSeller, validateProm
         purpose: 'homepage_promotion',
         promotionId: promotion._id.toString(),
         userId: req.user._id.toString(),
-        planCode: plan.code
+        planCode: plan.code,
+        marketCode
       },
       payment_intent_data: {
         metadata: {
           purpose: 'homepage_promotion',
           promotionId: promotion._id.toString(),
           userId: req.user._id.toString(),
-          planCode: plan.code
+          planCode: plan.code,
+          marketCode
         }
       },
       ...sellerCheckoutTaxSettings(),
@@ -815,7 +874,7 @@ router.post('/seller/promotions/homepage', protect, verifiedSeller, validateProm
     res.json({ url: session.url, sessionId: session.id })
   } catch (error) {
     if (promotion && promotion.status === 'pending_payment') {
-      promotion.status = 'failed'
+      promotion.status = promotion.creativeType === 'video' ? 'approved_for_payment' : 'failed'
       promotion.failureReason = 'The promotion payment session could not be created.'
       promotion.slotNumber = undefined
       await promotion.save().catch(() => undefined)
@@ -1041,7 +1100,8 @@ const handleWebhook = async (req, res) => {
         if (!subscription.metadata?.userId) subscription.metadata = {
           ...(subscription.metadata || {}),
           userId: user._id.toString(),
-          planCode: user.sellerProfile?.membershipPlanCode
+          planCode: user.sellerProfile?.membershipPlanCode,
+          marketCode: normalizeMarketCode(user.sellerProfile?.marketCode, 'GB')
         }
         await applySellerSubscription(subscription)
       }

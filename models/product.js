@@ -40,6 +40,19 @@ const listingEvidenceSchema = new mongoose.Schema({
 const productSchema = new mongoose.Schema({
   name: { type: String, required: true },
   price: { type: Number, required: true },
+  marketCode: {
+    type: String,
+    enum: ['NG', 'GB', 'US', 'CA'],
+    default: 'GB',
+    required: true,
+    index: true
+  },
+  currency: {
+    type: String,
+    enum: ['NGN', 'GBP', 'USD', 'CAD'],
+    default: 'GBP',
+    required: true
+  },
   compareAtPrice: { type: Number, min: 0 },
   sku: { type: String, trim: true, uppercase: true, maxlength: 64, default: '' },
   size: { type: String, trim: true, maxlength: 80, default: '' },
@@ -77,7 +90,7 @@ const productSchema = new mongoose.Schema({
   acceptedPaymentMethods: {
     type: [{
       type: String,
-      enum: ['card', 'bank_transfer', 'crypto']
+      enum: ['card', 'bank_transfer', 'ussd', 'crypto', 'cash_on_delivery']
     }],
     default: []
   },
@@ -95,7 +108,7 @@ const productSchema = new mongoose.Schema({
 }, { timestamps: true })
 
 productSchema.index({ name: 'text', brand: 'text', description: 'text', category: 'text' })
-productSchema.index({ approvalStatus: 1, category: 1, productType: 1, brand: 1, price: 1, createdAt: -1 })
+productSchema.index({ marketCode: 1, approvalStatus: 1, category: 1, productType: 1, brand: 1, price: 1, createdAt: -1 })
 productSchema.index({ seller: 1, countInStock: 1 })
 productSchema.index({ seller: 1, planVisibilityStatus: 1, createdAt: 1 })
 
