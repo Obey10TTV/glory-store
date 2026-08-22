@@ -98,6 +98,29 @@ const paymentLimiter = rateLimit({
   message: { message: 'Too many payment attempts, please try again later.' }
 })
 
+const positiveIntegerFromEnv = (name, fallback, maximum) => {
+  const parsed = Number.parseInt(process.env[name], 10)
+  if (!Number.isInteger(parsed) || parsed < 1) return fallback
+  return Math.min(parsed, maximum)
+}
+
+// Skin Guide has a deliberately small burst allowance. The database-backed
+// daily allowance in skinGuideQuotaService remains effective across restarts.
+const skinGuideLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: () => positiveIntegerFromEnv('SKIN_GUIDE_HOURLY_REQUEST_LIMIT', 12, 60),
+  keyGenerator: (req) => {
+    const subject = req.user?._id
+      ? `user:${req.user._id}`
+      : `ip:${ipKeyGenerator(req.ip || 'unknown')}`
+    const key = process.env.RATE_LIMIT_KEY_SECRET || process.env.JWT_SECRET || 'glory-local-rate-limit'
+    return `skin-guide:${crypto.createHmac('sha256', key).update(subject).digest('hex')}`
+  },
+  message: { message: 'Skin Guide is taking a short break. Please try again later.' },
+  standardHeaders: true,
+  legacyHeaders: false
+})
+
 // Marketplace conversations are useful, but must not become a spam channel.
 const conversationLimiter = rateLimit({
   windowMs: 60 * 60 * 1000,
@@ -342,6 +365,13 @@ const validateSecondFactor = [
     .trim()
     .custom((value) => /^\d{6}$/.test(value) || /^[A-F0-9]{6}-[A-F0-9]{6}$/i.test(value))
     .withMessage('Enter a 6-digit code or a valid recovery code'),
+]
+
+const validateSkinGuideMessage = [
+  body('message')
+    .trim()
+    .isLength({ min: 2, max: 600 })
+    .withMessage('Skin Guide questions must be between 2 and 600 characters')
 ]
 
 const validateProduct = [
@@ -795,6 +825,7 @@ module.exports = {
   otpAccountLimiter,
   uploadLimiter,
   paymentLimiter,
+  skinGuideLimiter,
   conversationLimiter,
   reportLimiter,
   moderationLimiter,
@@ -809,6 +840,7 @@ module.exports = {
   validateEmailOnly,
   validateOtpOnly,
   validateSecondFactor,
+  validateSkinGuideMessage,
   validateProduct,
   validateConversationStart,
   validateConversationMessage,

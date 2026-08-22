@@ -22,6 +22,7 @@ const conversationRoutes = require('./routes/conversationRoutes')
 const reportRoutes = require('./routes/reportRoutes')
 const promotionRoutes = require('./routes/promotionRoutes')
 const marketplaceRoutes = require('./routes/marketplaceRoutes')
+const skinGuideRoutes = require('./routes/skinGuideRoutes')
 
 const {
   generalLimiter,
@@ -149,7 +150,7 @@ app.use(generalLimiter)
 // Authenticated or financial data must never be shared through a browser or CDN cache.
 app.use([
   '/api/users', '/api/admin', '/api/orders', '/api/upload', '/api/conversations',
-  '/api/reports', '/api/reviews', '/api/paystack', '/api/stripe'
+  '/api/reports', '/api/reviews', '/api/paystack', '/api/stripe', '/api/skin-guide'
 ], (req, res, next) => {
   res.setHeader('Cache-Control', 'no-store, private')
   res.setHeader('Pragma', 'no-cache')
@@ -209,6 +210,7 @@ app.use('/api/conversations', conversationRoutes)
 app.use('/api/reports', reportRoutes)
 app.use('/api/promotions', promotionRoutes)
 app.use('/api/marketplace', marketplaceRoutes)
+app.use('/api/skin-guide', skinGuideRoutes)
 
 app.get('/api/health', (req, res) => {
   const databaseConnected = mongoose.connection.readyState === 1
