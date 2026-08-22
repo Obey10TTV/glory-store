@@ -9,6 +9,11 @@ const {
   isValidSellerDocumentKind
 } = require('../utils/sellerVerification')
 const { fileMatchesAllowedType, safeOriginalName } = require('../utils/fileValidation')
+const {
+  buildEagerTransformations,
+  buildImageProcessingRecord,
+  isOwnedProductImage
+} = require('../utils/productImageProcessing')
 
 // Configure Cloudinary
 cloudinary.config({
@@ -76,27 +81,75 @@ router.post('/', protect, runUpload(upload.single('image')), async (req, res) =>
       return res.status(400).json({ message: 'Upload a valid JPG, PNG or WebP image.' })
     }
 
+    const isPrimaryProductImage = req.body.purpose === 'product_primary'
+    const productFolder = `glory-store/products/${req.user._id}`
+
     // Convert buffer to base64
     const fileStr = `data:${req.file.mimetype};base64,${req.file.buffer.toString('base64')}`
 
-    // Upload to Cloudinary
+    // The uploaded original remains untouched. Cloudinary prepares separate,
+    // transparent delivery variants for the marketplace when this is a primary image.
     const uploadResponse = await cloudinary.uploader.upload(fileStr, {
-      folder: 'glory-store',
+      folder: isPrimaryProductImage ? productFolder : 'glory-store',
       resource_type: 'image',
-      transformation: [
-        { width: 800, height: 800, crop: 'limit' },
-        { quality: 'auto' },
-        { fetch_format: 'auto' }
-      ]
+      ...(isPrimaryProductImage ? {} : {
+        transformation: [
+          { width: 800, height: 800, crop: 'limit' },
+          { quality: 'auto' },
+          { fetch_format: 'auto' }
+        ]
+      }),
+      ...(isPrimaryProductImage ? {
+        eager: buildEagerTransformations(),
+        eager_async: true
+      } : {})
     })
+
+    const imageProcessing = isPrimaryProductImage && isOwnedProductImage(uploadResponse.public_id, req.user._id.toString())
+      ? buildImageProcessingRecord(cloudinary, {
+          originalImageUrl: uploadResponse.secure_url,
+          sourcePublicId: uploadResponse.public_id,
+          presentationBackground: req.body.presentationBackground,
+          processingStatus: 'processing'
+        })
+      : undefined
 
     res.json({
       message: 'Image uploaded successfully',
-      url: uploadResponse.secure_url
+      url: uploadResponse.secure_url,
+      imageProcessing
     })
 
   } catch (error) {
     res.status(500).json({ message: 'Image upload could not be completed.' })
+  }
+})
+
+router.post('/reprocess-product-image', protect, verifiedSeller, async (req, res) => {
+  try {
+    const sourcePublicId = String(req.body.sourcePublicId || '').trim()
+    if (!isOwnedProductImage(sourcePublicId, req.user._id.toString())) {
+      return res.status(400).json({ message: 'This product image cannot be reprocessed.' })
+    }
+
+    await cloudinary.uploader.explicit(sourcePublicId, {
+      type: 'upload',
+      resource_type: 'image',
+      eager: buildEagerTransformations(),
+      eager_async: true
+    })
+
+    const imageProcessing = buildImageProcessingRecord(cloudinary, {
+      originalImageUrl: String(req.body.originalImageUrl || ''),
+      sourcePublicId,
+      presentationBackground: req.body.presentationBackground,
+      useProcessedImage: req.body.useProcessedImage !== false,
+      processingStatus: 'processing'
+    })
+
+    res.json({ message: 'Glory Optimised image is being prepared', imageProcessing })
+  } catch (error) {
+    res.status(500).json({ message: 'Glory Optimised could not be reprocessed. Your original image is still available.' })
   }
 })
 

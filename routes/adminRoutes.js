@@ -15,6 +15,7 @@ const { sendOrderStatusEmail } = require('../utils/email')
 const { recordAudit } = require('../utils/audit')
 const { isCosmeticsCategory } = require('../utils/catalogTaxonomy')
 const { getRequiredSellerDocumentTypes, hasVerifiedSellerIdentity } = require('../utils/sellerVerification')
+const { buildEagerTransformations, buildImageProcessingRecord } = require('../utils/productImageProcessing')
 
 cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
@@ -36,6 +37,65 @@ const hasListingEvidence = (product) => {
   return Boolean(evidence.safetyDocumentationAvailable)
     && String(evidence.expiryOrPao || '').trim().length >= 2
 }
+
+const isSafeLegacyImageUrl = (value) => {
+  try {
+    const url = new URL(value)
+    if (url.protocol !== 'https:') return false
+    const host = url.hostname.toLowerCase()
+    return host === 'images.pexels.com' || host === 'res.cloudinary.com'
+  } catch {
+    return false
+  }
+}
+
+// Re-hosts only known, public legacy test assets. This creates derivatives and
+// preserves the old URL as the original evidence instead of replacing it.
+router.post('/products/image-processing/backfill', protect, admin, async (req, res) => {
+  try {
+    const limit = Math.min(25, Math.max(1, Number.parseInt(req.body.limit, 10) || 25))
+    const products = await Product.find({
+      image: { $type: 'string', $ne: '' },
+      'imageProcessing.sourcePublicId': { $in: [null, ''] }
+    }).sort({ createdAt: 1 }).limit(limit)
+
+    let queued = 0
+    let skipped = 0
+    for (const product of products) {
+      const originalImageUrl = product.image
+      if (!isSafeLegacyImageUrl(originalImageUrl)) {
+        skipped += 1
+        continue
+      }
+
+      const uploaded = await cloudinary.uploader.upload(originalImageUrl, {
+        folder: 'glory-store/products/legacy',
+        resource_type: 'image',
+        eager: buildEagerTransformations(),
+        eager_async: true
+      })
+      product.image = uploaded.secure_url
+      product.imageProcessing = buildImageProcessingRecord(cloudinary, {
+        originalImageUrl,
+        sourcePublicId: uploaded.public_id,
+        presentationBackground: product.imageProcessing?.presentationBackground || 'white',
+        processingStatus: 'processing'
+      })
+      await product.save()
+      queued += 1
+    }
+
+    await recordAudit(req, {
+      action: 'legacy_product_images_queued',
+      entityType: 'product_image',
+      entityId: req.user._id,
+      summary: `Queued ${queued} legacy product image${queued === 1 ? '' : 's'} for Glory Optimised processing; skipped ${skipped}.`
+    })
+    res.json({ queued, skipped, scanned: products.length })
+  } catch (error) {
+    res.status(500).json({ message: 'Legacy image optimisation could not be queued.' })
+  }
+})
 
 
 // GET ALL USERS - GET /api/admin/users

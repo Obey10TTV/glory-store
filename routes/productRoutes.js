@@ -14,6 +14,14 @@ const {
   normalizePaymentMethods
 } = require('../services/marketplaceService')
 const { enforceSellerPlanVisibility } = require('../services/sellerPlanEnforcementService')
+const { prepareProductImageProcessing } = require('../utils/productImageProcessing')
+const cloudinary = require('cloudinary').v2
+
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key: process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET
+})
 
 const publicSellerFields = [
   'name',
@@ -165,7 +173,7 @@ router.post('/', protect, verifiedSeller, validateProduct, handleValidationError
     const {
       name, price, compareAtPrice, sku, size, productType, countryOfOrigin,
       barcode, description, ingredients, howToUse, keyBenefits, category,
-      image, images, variants, brand, countInStock, lowStockThreshold, listingEvidence,
+      image, imageProcessing, images, variants, brand, countInStock, lowStockThreshold, listingEvidence,
       acceptedPaymentMethods
     } = req.body
     const listingBrand = getSellerListingBrand(req.user, brand)
@@ -202,6 +210,11 @@ router.post('/', protect, verifiedSeller, validateProduct, handleValidationError
       name, price, compareAtPrice, sku, size, productType: canonicalProductType, countryOfOrigin,
       barcode, description, ingredients, howToUse, keyBenefits, category,
       image, images, variants, brand: listingBrand, countInStock, lowStockThreshold,
+      imageProcessing: prepareProductImageProcessing(cloudinary, imageProcessing, {
+        originalImageUrl: image,
+        userId: req.user._id.toString(),
+        isAdmin: req.user.isAdmin
+      }),
       marketCode,
       currency: marketplace.currency,
       acceptedPaymentMethods: listingPaymentMethods,
@@ -241,6 +254,13 @@ router.put('/:id', protect, verifiedSeller, validateProduct, handleValidationErr
         product[field] = req.body[field]
       }
     })
+    if (Object.prototype.hasOwnProperty.call(req.body, 'imageProcessing') || Object.prototype.hasOwnProperty.call(req.body, 'image')) {
+      product.imageProcessing = prepareProductImageProcessing(cloudinary, req.body.imageProcessing, {
+        originalImageUrl: product.image,
+        userId: req.user._id.toString(),
+        isAdmin: req.user.isAdmin
+      })
+    }
     product.productType = canonicalizeProductType(product.category, product.productType)
     if (!product.productType) {
       return res.status(400).json({ message: 'Choose a product type that belongs to the selected category.' })

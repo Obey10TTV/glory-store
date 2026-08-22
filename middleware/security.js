@@ -392,6 +392,19 @@ const validateProduct = [
   body('image')
     .isURL({ protocols: ['http', 'https'], require_protocol: true })
     .withMessage('Product image must be a valid URL'),
+  body('imageProcessing.presentationBackground')
+    .optional()
+    .isIn(['white', 'black', 'berry'])
+    .withMessage('Choose a valid Glory product background'),
+  body('imageProcessing.useProcessedImage')
+    .optional()
+    .isBoolean()
+    .withMessage('Product image preference must be valid'),
+  body('imageProcessing.sourcePublicId')
+    .optional()
+    .isString()
+    .isLength({ max: 300 })
+    .withMessage('Product image source reference is invalid'),
   body('images')
     .isArray({ min: 1, max: 6 })
     .withMessage('Add at least 1 and up to 6 gallery images'),

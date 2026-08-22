@@ -56,6 +56,28 @@ const suiVerificationSchema = new mongoose.Schema({
   revokedAt: Date
 }, { _id: false })
 
+const imageProcessingSchema = new mongoose.Schema({
+  originalImageUrl: { type: String, trim: true, default: '' },
+  sourcePublicId: { type: String, trim: true, default: '' },
+  processedImageUrl: { type: String, trim: true, default: '' },
+  thumbnailImageUrl: { type: String, trim: true, default: '' },
+  cardImageUrl: { type: String, trim: true, default: '' },
+  highResolutionImageUrl: { type: String, trim: true, default: '' },
+  backgroundRemoved: { type: Boolean, default: false },
+  processingStatus: {
+    type: String,
+    enum: ['not_requested', 'pending', 'processing', 'completed', 'failed'],
+    default: 'not_requested'
+  },
+  processingError: { type: String, trim: true, maxlength: 240, default: '' },
+  useProcessedImage: { type: Boolean, default: true },
+  presentationBackground: {
+    type: String,
+    enum: ['white', 'black', 'berry'],
+    default: 'white'
+  }
+}, { _id: false })
+
 const productSchema = new mongoose.Schema({
   name: { type: String, required: true },
   price: { type: Number, required: true },
@@ -92,6 +114,7 @@ const productSchema = new mongoose.Schema({
     ]
   },
   image: { type: String, required: true },
+  imageProcessing: { type: imageProcessingSchema, default: () => ({}) },
   images: { type: [String], default: [] },
   variants: { type: [variantSchema], default: [] },
   brand: { type: String, required: true },
