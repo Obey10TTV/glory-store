@@ -95,7 +95,9 @@ router.get('/', async (req, res) => {
       .sort(sort)
 
     if (!hasCatalogueQuery) {
-      return res.json(await productQuery)
+      // Preserve the legacy array response while preventing unbounded public
+      // catalogue reads. Filtered catalogue requests retain pagination below.
+      return res.json(await productQuery.limit(48))
     }
 
     const facetQuery = { ...query }

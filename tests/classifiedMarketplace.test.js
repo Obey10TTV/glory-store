@@ -52,6 +52,30 @@ test('public product JSON never exposes private listing evidence', () => {
   assert.equal(publicProduct.listingEvidence.declarationAccepted, undefined)
 })
 
+test('public product JSON may expose an on-chain proof reference without private evidence', () => {
+  const product = new Product({
+    name: 'Verified Repair Serum',
+    price: 24,
+    description: 'A fragrance-free serum with a simple routine-friendly texture.',
+    category: 'Skincare',
+    image: 'https://example.com/serum.jpg',
+    brand: 'Glow Lab',
+    countInStock: 4,
+    listingEvidence: { batchCode: 'PRIVATE-LOT-2026' },
+    suiVerification: {
+      status: 'verified',
+      network: 'testnet',
+      attestationHash: 'a'.repeat(64),
+      transactionDigest: 'sui-test-digest'
+    }
+  })
+
+  const publicProduct = product.toJSON()
+  assert.equal(publicProduct.suiVerification.status, 'verified')
+  assert.equal(publicProduct.suiVerification.attestationHash, 'a'.repeat(64))
+  assert.equal(publicProduct.listingEvidence.batchCode, undefined)
+})
+
 test('homepage promotion pricing is server controlled', () => {
   const plan = getPromotionPlan('homepage_spotlight_7', 'GB')
   assert.equal(plan.placement, 'homepage_featured')

@@ -75,6 +75,24 @@ const sellerAllocationSchema = new mongoose.Schema({
   paidOutAt: Date
 })
 
+// A receipt is written only after Glory has independently checked the digest
+// with its configured Sui RPC. It contains no wallet secret or personal data.
+const suiReceiptSchema = new mongoose.Schema({
+  status: {
+    type: String,
+    enum: ['not_requested', 'pending_verification', 'verified', 'rejected'],
+    default: 'not_requested'
+  },
+  network: { type: String, enum: ['testnet'], default: 'testnet' },
+  transactionDigest: { type: String, trim: true, maxlength: 128, default: '' },
+  receiptObjectId: { type: String, trim: true, maxlength: 100, default: '' },
+  paymentIntentHash: { type: String, trim: true, lowercase: true, maxlength: 128, default: '' },
+  coinType: { type: String, trim: true, maxlength: 300, default: '' },
+  amountAtomic: { type: String, trim: true, maxlength: 80, default: '' },
+  verifiedAt: Date,
+  rejectedAt: Date
+}, { _id: false })
+
 const orderSchema = new mongoose.Schema({
   buyer: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
   orderItems: [orderItemSchema],
@@ -114,6 +132,7 @@ const orderSchema = new mongoose.Schema({
   sellerAllocations: { type: [sellerAllocationSchema], default: [] },
   transferGroup: { type: String, trim: true, default: '' },
   paymentSourceId: { type: String, trim: true, default: '' },
+  suiReceipt: { type: suiReceiptSchema, default: () => ({}) },
   isPaid: { type: Boolean, required: true, default: false },
   paidAt: Date,
   isDelivered: { type: Boolean, required: true, default: false },

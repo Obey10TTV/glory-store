@@ -41,6 +41,7 @@ const { httpLogger, logger, sanitizeErrorMessage } = require('./middleware/logge
 const { csrfProtection } = require('./middleware/csrf')
 const { getAllowedOrigins, requireTrustedBrowserOrigin } = require('./utils/originPolicy')
 const { assertProductionSecurityConfig } = require('./utils/runtimeSecurity')
+const { assertSuiConfiguration } = require('./utils/suiConfig')
 const { releaseExpiredReservations } = require('./services/reservationService')
 const { migrateLegacyProductReviews } = require('./services/reviewMigrationService')
 const { migrateLegacyMarketplaceRecords } = require('./services/marketMigrationService')
@@ -49,6 +50,7 @@ const app = express()
 app.disable('x-powered-by')
 
 assertProductionSecurityConfig()
+assertSuiConfiguration()
 const allowedOrigins = getAllowedOrigins()
 
 const corsOptions = {

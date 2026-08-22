@@ -15,13 +15,13 @@ Date: 2026-08-20
 
 ## Findings
 
-### CRITICAL: previously disclosed database credential must be rotated
+### CRITICAL: historic environment-file exposure requires full credential rotation
 
-1. Vulnerability: a MongoDB password was disclosed outside the repository during project work.
-2. Attack scenario: anyone who retained that value could connect if Atlas network access permits it.
-3. Affected files: none confirmed. Current tracked files contain no verified secret value.
-4. Impact: database takeover and PII exposure.
-5. Remediation: rotate the Atlas database user password immediately, revoke unused database users, restrict Atlas Network Access, and replace `MONGO_URI` only in Railway secrets.
+1. Vulnerability: Git history records an environment-file removal commit. Even though the current tree ignores `.env`, any credential that appeared in historic commits must be treated as exposed.
+2. Attack scenario: anyone with repository history or a prior clone could retain a credential and access a provider if network or account controls permit it.
+3. Affected files: historic `.env` commit; no secret value is reproduced in this document or current tracked files.
+4. Impact: database, payment, email, storage, OAuth or session-signing compromise depending on the historic contents.
+5. Remediation: rotate every credential that could have appeared there, revoke unused users/tokens, restrict Atlas Network Access, replace values only in Railway/Vercel secrets, and enable GitHub secret scanning. Consider history rewriting only after preserving an incident record and coordinating with all collaborators.
 6. Implemented: no. Credential rotation is an operator action and cannot be safely performed from source code.
 7. Remaining risk: critical until rotation and Atlas access review are confirmed.
 
