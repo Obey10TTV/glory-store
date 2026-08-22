@@ -1,5 +1,5 @@
 const { SuiGrpcClient } = require('@mysten/sui/grpc')
-const { isValidTransactionDigest, normalizeSuiAddress } = require('@mysten/sui/utils')
+const { isValidTransactionDigest, normalizeSuiAddress, normalizeStructTag } = require('@mysten/sui/utils')
 const { getSuiConfig, TESTNET_NETWORK } = require('../utils/suiConfig')
 
 const createSuiClient = (config = getSuiConfig()) => {
@@ -55,8 +55,24 @@ const findGloryVerificationEvent = (transaction, config) => {
   )) || null
 }
 
+const findGloryVerificationObject = (transaction, config) => {
+  if (!config.verificationObjectType) {
+    throw Object.assign(new Error('Sui product verification package is not configured'), { statusCode: 503 })
+  }
+
+  const expectedType = normalizeStructTag(config.verificationObjectType)
+  const createdObjectIds = new Set((transaction.effects?.changedObjects || [])
+    .filter((change) => change.idOperation === 'Created' && change.outputState === 'ObjectWrite')
+    .map((change) => String(change.objectId)))
+
+  return Object.entries(transaction.objectTypes || {}).find(([objectId, objectType]) => (
+    createdObjectIds.has(objectId) && normalizeStructTag(objectType) === expectedType
+  ))?.[0] || null
+}
+
 module.exports = {
   createSuiClient,
   readVerifiedSuiTransaction,
-  findGloryVerificationEvent
+  findGloryVerificationEvent,
+  findGloryVerificationObject
 }

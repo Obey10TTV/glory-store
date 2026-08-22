@@ -25,6 +25,9 @@ const getSuiConfig = (env = process.env) => {
   const explorerBaseUrl = normalize(env.SUI_EXPLORER_BASE_URL || 'https://suiscan.xyz/testnet')
   const verificationEventType = normalize(env.SUI_VERIFICATION_EVENT_TYPE)
     || (packageId ? `${packageId}::glory_verification::ProductVerified` : '')
+  const verificationObjectType = packageId
+    ? `${packageId}::glory_verification::ProductVerification`
+    : ''
 
   return {
     enabled: network === TESTNET_NETWORK && Boolean(rpcUrl && packageId && registryObjectId),
@@ -33,7 +36,8 @@ const getSuiConfig = (env = process.env) => {
     packageId,
     registryObjectId,
     explorerBaseUrl,
-    verificationEventType
+    verificationEventType,
+    verificationObjectType
   }
 }
 
