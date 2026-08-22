@@ -98,21 +98,35 @@ router.post('/', protect, runUpload(upload.single('image')), async (req, res) =>
           { quality: 'auto' },
           { fetch_format: 'auto' }
         ]
-      }),
-      ...(isPrimaryProductImage ? {
-        eager: buildEagerTransformations(),
-        eager_async: true
-      } : {})
+      })
     })
 
-    const imageProcessing = isPrimaryProductImage && isOwnedProductImage(uploadResponse.public_id, req.user._id.toString())
-      ? buildImageProcessingRecord(cloudinary, {
+    let imageProcessing
+    if (isPrimaryProductImage && isOwnedProductImage(uploadResponse.public_id, req.user._id.toString())) {
+      try {
+        await cloudinary.uploader.explicit(uploadResponse.public_id, {
+          type: 'upload',
+          resource_type: 'image',
+          eager: buildEagerTransformations(),
+          eager_async: true
+        })
+        imageProcessing = buildImageProcessingRecord(cloudinary, {
           originalImageUrl: uploadResponse.secure_url,
           sourcePublicId: uploadResponse.public_id,
           presentationBackground: req.body.presentationBackground,
           processingStatus: 'processing'
         })
-      : undefined
+      } catch {
+        imageProcessing = buildImageProcessingRecord(cloudinary, {
+          originalImageUrl: uploadResponse.secure_url,
+          sourcePublicId: uploadResponse.public_id,
+          presentationBackground: req.body.presentationBackground,
+          useProcessedImage: false,
+          processingStatus: 'failed',
+          processingError: 'Glory Optimised is unavailable right now. Your original image is saved and will be used.'
+        })
+      }
+    }
 
     res.json({
       message: 'Image uploaded successfully',
