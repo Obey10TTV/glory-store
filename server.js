@@ -46,6 +46,7 @@ const { assertSuiConfiguration } = require('./utils/suiConfig')
 const { releaseExpiredReservations } = require('./services/reservationService')
 const { migrateLegacyProductReviews } = require('./services/reviewMigrationService')
 const { migrateLegacyMarketplaceRecords } = require('./services/marketMigrationService')
+const { ensurePromotionSchedulingIndexes, runPromotionMaintenance } = require('./services/promotionService')
 
 const app = express()
 app.disable('x-powered-by')
@@ -179,6 +180,8 @@ const connectDatabase = async () => {
     if (migrated) logger.info('Legacy product reviews migrated to verified-interaction reviews')
     const marketsMigrated = await migrateLegacyMarketplaceRecords()
     if (marketsMigrated) logger.info('Legacy marketplace records migrated to regional markets')
+    await ensurePromotionSchedulingIndexes()
+    await runPromotionMaintenance()
   } catch (err) {
     logger.error('MongoDB connection error:', err)
   }
@@ -286,6 +289,13 @@ const reservationTimer = setInterval(() => {
   })
 }, 5 * 60 * 1000)
 reservationTimer.unref()
+
+const promotionTimer = setInterval(() => {
+  runPromotionMaintenance().catch((error) => {
+    logger.error({ type: 'PROMOTION_SCHEDULE_SWEEP_FAILED', message: error.message })
+  })
+}, 60 * 1000)
+promotionTimer.unref()
 
 process.on('unhandledRejection', (error) => {
   logger.error({

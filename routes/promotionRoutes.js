@@ -10,7 +10,11 @@ const {
   normalizeMarketCode,
   pricePromotionForSeller
 } = require('../services/marketplaceService')
-const { releaseExpiredPromotionSlots } = require('../services/promotionService')
+const {
+  getAvailablePromotionStartDates,
+  readPromotionCapacity,
+  runPromotionMaintenance
+} = require('../services/promotionService')
 
 const router = express.Router()
 
@@ -35,12 +39,12 @@ router.get('/plans', (req, res) => {
 
 router.get('/homepage', async (req, res) => {
   try {
-    await releaseExpiredPromotionSlots()
+    await runPromotionMaintenance()
     const now = new Date()
     const marketCode = normalizeMarketCode(req.query.market, 'NG')
-    const promotions = await Promotion.find({
+    const findPublicPromotions = (placement, limit) => Promotion.find({
       marketCode,
-      placement: { $in: ['homepage_featured', 'homepage_video'] },
+      placement,
       status: 'active',
       startsAt: { $lte: now },
       endsAt: { $gt: now },
@@ -49,8 +53,8 @@ router.get('/homepage', async (req, res) => {
         { placement: 'homepage_video', creativeReviewStatus: 'approved' }
       ]
     })
-      .sort({ activatedAt: -1, _id: -1 })
-      .limit(8)
+      .sort({ startsAt: 1, activatedAt: 1, _id: 1 })
+      .limit(limit)
       .populate({
         path: 'listing',
         match: { approvalStatus: 'approved', planVisibilityStatus: { $ne: 'paused' }, countInStock: { $gt: 0 } },
@@ -61,6 +65,12 @@ router.get('/homepage', async (req, res) => {
         }
       })
       .lean()
+
+    const [featuredPromotions, videoPromotions] = await Promise.all([
+      findPublicPromotions('homepage_featured', readPromotionCapacity(marketCode, 'homepage_featured')),
+      findPublicPromotions('homepage_video', 1)
+    ])
+    const promotions = [...featuredPromotions, ...videoPromotions]
 
     const items = promotions
       .filter((promotion) => promotion.listing)
@@ -90,9 +100,33 @@ router.get('/homepage', async (req, res) => {
   }
 })
 
+router.get('/availability', protect, verifiedSeller, async (req, res) => {
+  try {
+    const marketCode = normalizeMarketCode(req.user.sellerProfile?.marketCode, 'GB')
+    const plan = getPromotionPlan(String(req.query.planCode || ''), marketCode)
+    if (!plan) return res.status(400).json({ message: 'Choose an available homepage campaign.' })
+
+    await runPromotionMaintenance()
+    const startDates = await getAvailablePromotionStartDates({
+      marketCode,
+      placement: plan.placement,
+      durationDays: plan.durationDays
+    })
+    res.json({
+      marketCode,
+      placement: plan.placement,
+      durationDays: plan.durationDays,
+      capacity: readPromotionCapacity(marketCode, plan.placement),
+      startDates
+    })
+  } catch (error) {
+    res.status(500).json({ message: 'Campaign availability could not be loaded.' })
+  }
+})
+
 router.get('/mine', protect, seller, async (req, res) => {
   try {
-    await releaseExpiredPromotionSlots()
+    await runPromotionMaintenance()
     const promotions = await Promotion.find({ seller: req.user._id })
       .populate('listing', 'name image brand category approvalStatus')
       .sort({ createdAt: -1 })
@@ -153,7 +187,7 @@ router.post('/video-drafts', protect, verifiedSeller, validatePromotionCheckout,
       seller: req.user._id,
       listing: listing._id,
       placement: 'homepage_video',
-      status: { $in: ['pending_review', 'approved_for_payment', 'pending_payment', 'active'] }
+      status: { $in: ['pending_review', 'approved_for_payment', 'pending_payment', 'scheduled', 'active'] }
     })
     if (existing) {
       return res.status(409).json({ message: 'This listing already has a video campaign in review or in progress.' })

@@ -264,6 +264,10 @@ const validateRegister = [
     .optional()
     .isIn(['NG', 'GB', 'US', 'CA'])
     .withMessage('Choose an available Glory market'),
+  body('startDate')
+    .optional({ checkFalsy: true })
+    .matches(/^\d{4}-\d{2}-\d{2}$/)
+    .withMessage('Choose a valid campaign start date'),
 ]
 
 const validateUpdateProfile = [

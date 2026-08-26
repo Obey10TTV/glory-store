@@ -269,10 +269,17 @@ router.post('/promotion-media', protect, verifiedSeller, runUpload(promotionMedi
       eager_async: true
     })
 
+    const durationSeconds = Number(uploaded.duration || 0)
+    if (!Number.isFinite(durationSeconds) || durationSeconds <= 0 || durationSeconds > 10.5) {
+      await cloudinary.uploader.destroy(uploaded.public_id, { resource_type: 'video', invalidate: true }).catch(() => undefined)
+      return res.status(400).json({ message: 'Campaign videos must be no longer than 10 seconds.' })
+    }
+
     res.status(201).json({
       message: 'Campaign media uploaded for review',
       url: uploaded.secure_url,
-      mediaType: 'video'
+      mediaType: 'video',
+      durationSeconds
     })
   } catch (error) {
     res.status(error instanceof multer.MulterError ? 400 : 500).json({

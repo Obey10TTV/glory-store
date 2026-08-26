@@ -47,7 +47,7 @@ const promotionSchema = new mongoose.Schema({
   slotNumber: { type: Number, min: 1, max: 32 },
   status: {
     type: String,
-    enum: ['pending_review', 'approved_for_payment', 'pending_payment', 'active', 'expired', 'failed', 'cancelled'],
+    enum: ['pending_review', 'approved_for_payment', 'pending_payment', 'scheduled', 'active', 'expired', 'failed', 'cancelled'],
     default: 'pending_payment',
     index: true
   },
@@ -66,7 +66,13 @@ const promotionSchema = new mongoose.Schema({
 
 promotionSchema.index({ marketCode: 1, placement: 1, status: 1, startsAt: 1, endsAt: 1 })
 promotionSchema.index({ seller: 1, listing: 1, status: 1, createdAt: -1 })
-promotionSchema.index({ marketCode: 1, placement: 1, slotNumber: 1 }, { unique: true, sparse: true })
+// A slot can be booked again for a different campaign window. The service also
+// checks overlapping windows before allocation, while this index prevents two
+// requests from claiming the exact same slot and start date concurrently.
+promotionSchema.index(
+  { marketCode: 1, placement: 1, slotNumber: 1, startsAt: 1 },
+  { unique: true, sparse: true, name: 'promotion_slot_start_unique' }
+)
 
 promotionSchema.set('toJSON', {
   transform: (doc, ret) => {

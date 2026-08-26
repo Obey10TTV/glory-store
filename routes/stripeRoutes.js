@@ -245,7 +245,7 @@ const applyHomepagePromotionSession = async (session) => {
   if (!promotion || String(promotion.seller) !== String(userId)) {
     throw Object.assign(new Error('Promotion not found'), { statusCode: 404 })
   }
-  if (promotion.status === 'active') return promotion
+  if (['active', 'scheduled'].includes(promotion.status)) return promotion
 
   if (
     session.currency !== String(promotion.currency).toLowerCase()
@@ -283,18 +283,21 @@ const applyHomepagePromotionSession = async (session) => {
   }
 
   const now = new Date()
-  promotion.status = 'active'
+  const hasFutureBooking = promotion.startsAt && new Date(promotion.startsAt) > now
+  promotion.status = hasFutureBooking ? 'scheduled' : 'active'
   promotion.paymentReference = session.id
   promotion.paymentIntentId = String(session.payment_intent || '')
   promotion.activatedAt = now
-  promotion.startsAt = now
-  promotion.endsAt = new Date(now.getTime() + (promotion.durationDays * 24 * 60 * 60 * 1000))
+  if (!promotion.startsAt || !promotion.endsAt) {
+    promotion.startsAt = now
+    promotion.endsAt = new Date(now.getTime() + (promotion.durationDays * 24 * 60 * 60 * 1000))
+  }
   promotion.failureReason = ''
   await promotion.save()
 
   await AuditLog.create({
     actor: promotion.seller,
-    action: 'homepage_promotion_activated',
+    action: promotion.status === 'scheduled' ? 'homepage_promotion_scheduled' : 'homepage_promotion_activated',
     entityType: 'promotion',
     entityId: promotion._id.toString(),
     summary: `Homepage promotion activated for listing ${listing._id}`
@@ -740,6 +743,9 @@ router.post('/seller/promotions/homepage', protect, verifiedSeller, validateProm
       return res.status(400).json({ message: 'That promotion plan is unavailable.' })
     }
     const promotionPrice = pricePromotionForSeller(plan, req.user.sellerProfile)
+    if (!req.body.startDate) {
+      return res.status(400).json({ message: 'Choose an available campaign start date.' })
+    }
 
     const listing = await Product.findOne({
       _id: req.body.listingId,
@@ -759,10 +765,10 @@ router.post('/seller/promotions/homepage', protect, verifiedSeller, validateProm
       listing: listing._id,
       marketCode,
       placement: plan.placement,
-      status: { $in: ['pending_payment', 'active'] }
+      status: { $in: ['pending_payment', 'scheduled', 'active'] }
     }).select('+paymentReference')
 
-    if (existing?.status === 'active' && existing.endsAt > now) {
+    if (['active', 'scheduled'].includes(existing?.status) && existing.endsAt > now) {
       return res.json({ alreadyActive: true, promotion: existing })
     }
     if (existing?.status === 'active') {
@@ -798,7 +804,7 @@ router.post('/seller/promotions/homepage', protect, verifiedSeller, validateProm
       if (!draft) {
         return res.status(409).json({ message: 'This video campaign must be approved before payment.' })
       }
-      promotion = await reserveApprovedPromotion(draft._id)
+      promotion = await reserveApprovedPromotion(draft._id, { startDate: req.body.startDate })
     } else {
       promotion = await reserveHomepagePromotion({
         seller: req.user._id,
@@ -817,10 +823,10 @@ router.post('/seller/promotions/homepage', protect, verifiedSeller, validateProm
         creativeReviewStatus: 'not_required',
         paymentProvider: 'stripe',
         status: 'pending_payment'
-      })
+      }, { startDate: req.body.startDate })
     }
     if (!promotion) {
-      return res.status(409).json({ message: 'This homepage placement is sold out for the current period. Please try again when a slot becomes available.' })
+      return res.status(409).json({ message: 'That campaign date is no longer available. Choose another date and try again.' })
     }
 
     const session = await stripe.checkout.sessions.create({
