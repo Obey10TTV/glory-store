@@ -326,7 +326,7 @@ router.post('/seller/promotions/homepage', protect, verifiedSeller, validateProm
     if (!listing) return res.status(404).json({ message: 'Choose an approved, in-stock listing from this market.' })
 
     const price = pricePromotionForSeller(plan, req.user.sellerProfile)
-    if (plan.placement === 'homepage_video') {
+    if (plan.requiresCreative) {
       const draft = await Promotion.findOne({
         _id: req.body.promotionId,
         seller: req.user._id,
@@ -390,7 +390,7 @@ router.post('/seller/promotions/homepage', protect, verifiedSeller, validateProm
     })
   } catch (error) {
     if (promotion?.status === 'pending_payment') {
-      promotion.status = promotion.creativeType === 'video' ? 'approved_for_payment' : 'failed'
+      promotion.status = promotion.creativeReviewStatus === 'approved' ? 'approved_for_payment' : 'failed'
       promotion.failureReason = 'The campaign payment session could not be created.'
       promotion.slotNumber = undefined
       await promotion.save().catch(() => undefined)

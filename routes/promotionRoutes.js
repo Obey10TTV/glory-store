@@ -48,10 +48,7 @@ router.get('/homepage', async (req, res) => {
       status: 'active',
       startsAt: { $lte: now },
       endsAt: { $gt: now },
-      $or: [
-        { placement: 'homepage_featured' },
-        { placement: 'homepage_video', creativeReviewStatus: 'approved' }
-      ]
+      ...(placement === 'homepage_featured' ? {} : { creativeReviewStatus: 'approved' })
     })
       .sort({ startsAt: 1, activatedAt: 1, _id: 1 })
       .limit(limit)
@@ -66,11 +63,12 @@ router.get('/homepage', async (req, res) => {
       })
       .lean()
 
-    const [featuredPromotions, videoPromotions] = await Promise.all([
+    const [featuredPromotions, videoPromotions, heroPromotions] = await Promise.all([
       findPublicPromotions('homepage_featured', readPromotionCapacity(marketCode, 'homepage_featured')),
-      findPublicPromotions('homepage_video', 1)
+      findPublicPromotions('homepage_video', 1),
+      findPublicPromotions('homepage_hero', 1)
     ])
-    const promotions = [...featuredPromotions, ...videoPromotions]
+    const promotions = [...featuredPromotions, ...videoPromotions, ...heroPromotions]
 
     const items = promotions
       .filter((promotion) => promotion.listing)
@@ -79,8 +77,8 @@ router.get('/homepage', async (req, res) => {
         placement: promotion.placement,
         label: 'Sponsored',
         endsAt: promotion.endsAt,
-        creative: promotion.placement === 'homepage_video' ? {
-          type: 'video',
+        creative: promotion.placement !== 'homepage_featured' ? {
+          type: promotion.creativeType || 'video',
           headline: promotion.creativeHeadline,
           copy: promotion.creativeCopy,
           mediaUrl: promotion.creativeMediaUrl,
@@ -93,7 +91,8 @@ router.get('/homepage', async (req, res) => {
       marketCode,
       items,
       listingItems: items.filter((item) => item.placement === 'homepage_featured'),
-      videoItems: items.filter((item) => item.placement === 'homepage_video')
+      videoItems: items.filter((item) => item.placement === 'homepage_video'),
+      heroItems: items.filter((item) => item.placement === 'homepage_hero')
     })
   } catch (error) {
     res.status(500).json({ message: 'Unable to load sponsored listings.' })
@@ -146,12 +145,12 @@ router.get('/mine', protect, seller, async (req, res) => {
   }
 })
 
-router.post('/video-drafts', protect, verifiedSeller, validatePromotionCheckout, handleValidationErrors, async (req, res) => {
+const submitCreativeDraft = async (req, res) => {
   try {
     const marketCode = normalizeMarketCode(req.user.sellerProfile?.marketCode, 'GB')
     const plan = getPromotionPlan(req.body.planCode, marketCode)
-    if (!plan || plan.placement !== 'homepage_video') {
-      return res.status(400).json({ message: 'Choose an available homepage video plan.' })
+    if (!plan || !['homepage_video', 'homepage_hero'].includes(plan.placement)) {
+      return res.status(400).json({ message: 'Choose an available creative homepage campaign.' })
     }
 
     const headline = String(req.body.creativeHeadline || '').trim()
@@ -162,13 +161,30 @@ router.post('/video-drafts', protect, verifiedSeller, validatePromotionCheckout,
 
     const mediaUrl = String(req.body.creativeMediaUrl || '').trim()
     let mediaHost = ''
+    let mediaPath = ''
     try {
-      mediaHost = new URL(mediaUrl).hostname
+      const parsedMediaUrl = new URL(mediaUrl)
+      mediaHost = parsedMediaUrl.hostname
+      mediaPath = decodeURIComponent(parsedMediaUrl.pathname)
     } catch (error) {
-      return res.status(400).json({ message: 'Upload the campaign video through Glory first.' })
+      return res.status(400).json({ message: 'Upload the campaign creative through Glory first.' })
     }
-    if (mediaHost !== 'res.cloudinary.com') {
-      return res.status(400).json({ message: 'Upload the campaign video through Glory first.' })
+    if (
+      mediaHost !== 'res.cloudinary.com'
+      || !mediaPath.includes('/glory-store/promotions/')
+      || !mediaPath.includes(String(req.user._id))
+    ) {
+      return res.status(400).json({ message: 'Upload the campaign creative through Glory first.' })
+    }
+    const creativeType = String(req.body.creativeMediaType || 'video').trim().toLowerCase()
+    if (!['image', 'video'].includes(creativeType)) {
+      return res.status(400).json({ message: 'Upload a valid campaign image or video.' })
+    }
+    if (plan.placement === 'homepage_video' && creativeType !== 'video') {
+      return res.status(400).json({ message: 'Homepage Video campaigns require a video creative.' })
+    }
+    if (req.body.creativeSafetyDeclaration !== true) {
+      return res.status(400).json({ message: 'Confirm that your creative contains no nudity, illegal content, prohibited claims or deceptive material.' })
     }
 
     const listing = await Product.findOne({
@@ -186,11 +202,11 @@ router.post('/video-drafts', protect, verifiedSeller, validatePromotionCheckout,
     const existing = await Promotion.findOne({
       seller: req.user._id,
       listing: listing._id,
-      placement: 'homepage_video',
+      placement: plan.placement,
       status: { $in: ['pending_review', 'approved_for_payment', 'pending_payment', 'scheduled', 'active'] }
     })
     if (existing) {
-      return res.status(409).json({ message: 'This listing already has a video campaign in review or in progress.' })
+      return res.status(409).json({ message: 'This listing already has this type of campaign in review or in progress.' })
     }
 
     const price = pricePromotionForSeller(plan, req.user.sellerProfile)
@@ -208,30 +224,34 @@ router.post('/video-drafts', protect, verifiedSeller, validatePromotionCheckout,
       currency: plan.currency,
       durationDays: plan.durationDays,
       paymentProvider: plan.billingProvider,
-      creativeType: 'video',
+      creativeType,
       creativeHeadline: headline,
       creativeCopy,
       creativeMediaUrl: mediaUrl,
       creativeCtaLabel: String(req.body.creativeCtaLabel || 'View product').trim(),
+      creativeSafetyDeclared: true,
       creativeReviewStatus: 'pending',
       status: 'pending_review'
     })
 
     await AuditLog.create({
       actor: req.user._id,
-      action: 'homepage_video_submitted',
+      action: `${plan.placement}_submitted`,
       entityType: 'promotion',
       entityId: promotion._id.toString(),
-      summary: `Homepage video submitted for listing ${listing._id}`,
+      summary: `${plan.label} submitted for listing ${listing._id}`,
       requestId: req.requestId || ''
     })
     res.status(201).json({
-      message: 'Your video campaign is in review. Payment is requested only after approval.',
+      message: 'Your campaign is in review. Payment is requested only after creative and safety approval.',
       promotion
     })
   } catch (error) {
     res.status(500).json({ message: 'The video campaign could not be submitted.' })
   }
-})
+}
+
+router.post('/video-drafts', protect, verifiedSeller, validatePromotionCheckout, handleValidationErrors, submitCreativeDraft)
+router.post('/creative-drafts', protect, verifiedSeller, validatePromotionCheckout, handleValidationErrors, submitCreativeDraft)
 
 module.exports = router

@@ -56,6 +56,16 @@ const promotionMediaUpload = multer({
   }
 })
 
+const heroCreativeUpload = multer({
+  storage,
+  limits: { fileSize: 25 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    const allowedTypes = ['image/jpeg', 'image/png', 'image/webp', 'video/mp4', 'video/webm']
+    const allowed = allowedTypes.includes(file.mimetype)
+    cb(allowed ? null : new Error('Use a JPG, PNG, WebP, MP4 or WebM campaign creative'), allowed)
+  }
+})
+
 const runUpload = (middleware) => (req, res, next) => {
   middleware(req, res, (error) => {
     if (error) return res.status(400).json({ message: error.message })
@@ -284,6 +294,51 @@ router.post('/promotion-media', protect, verifiedSeller, runUpload(promotionMedi
   } catch (error) {
     res.status(error instanceof multer.MulterError ? 400 : 500).json({
       message: error instanceof multer.MulterError ? error.message : 'Campaign media could not be uploaded'
+    })
+  }
+})
+
+router.post('/promotion-hero-media', protect, verifiedSeller, runUpload(heroCreativeUpload.single('media')), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ message: 'Choose a campaign image or video.' })
+    const isVideo = req.file.mimetype.startsWith('video/')
+    const allowedTypes = isVideo
+      ? ['video/mp4', 'video/webm']
+      : ['image/jpeg', 'image/png', 'image/webp']
+    if (!fileMatchesAllowedType(req.file, allowedTypes)) {
+      return res.status(400).json({ message: 'Upload a valid JPG, PNG, WebP, MP4 or WebM campaign creative.' })
+    }
+    if (!isVideo && req.file.size > 5 * 1024 * 1024) {
+      return res.status(400).json({ message: 'Campaign images must be 5 MB or smaller.' })
+    }
+
+    const uploaded = await uploadBuffer(req.file.buffer, {
+      folder: `glory-store/promotions/hero/${req.user._id}`,
+      resource_type: isVideo ? 'video' : 'image',
+      use_filename: false,
+      unique_filename: true,
+      transformation: [{ width: 1672, height: 940, crop: 'fill', gravity: 'auto' }, { quality: 'auto' }, { fetch_format: 'auto' }],
+      eager: isVideo ? [{ width: 1672, height: 940, crop: 'fill', gravity: 'auto', quality: 'auto' }] : undefined,
+      eager_async: isVideo
+    })
+
+    const durationSeconds = isVideo ? Number(uploaded.duration || 0) : 0
+    if (isVideo && (!Number.isFinite(durationSeconds) || durationSeconds <= 0 || durationSeconds > 10.5)) {
+      await cloudinary.uploader.destroy(uploaded.public_id, { resource_type: 'video', invalidate: true }).catch(() => undefined)
+      return res.status(400).json({ message: 'Homepage feature videos must be no longer than 10 seconds.' })
+    }
+
+    res.status(201).json({
+      message: 'Hero campaign creative uploaded for review',
+      url: uploaded.secure_url,
+      mediaType: isVideo ? 'video' : 'image',
+      durationSeconds,
+      presentation: { width: 1672, height: 940, aspectRatio: '16:9' },
+      moderation: 'Manual Trust & Safety review is required before this creative can be approved.'
+    })
+  } catch (error) {
+    res.status(error instanceof multer.MulterError ? 400 : 500).json({
+      message: error instanceof multer.MulterError ? error.message : 'Hero campaign media could not be uploaded'
     })
   }
 })

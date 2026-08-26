@@ -12,7 +12,7 @@ const promotionSchema = new mongoose.Schema({
   },
   placement: {
     type: String,
-    enum: ['homepage_featured', 'homepage_video'],
+    enum: ['homepage_featured', 'homepage_video', 'homepage_hero'],
     required: true,
     index: true
   },
@@ -29,13 +29,16 @@ const promotionSchema = new mongoose.Schema({
   currency: { type: String, required: true, trim: true, uppercase: true, maxlength: 3 },
   creativeType: {
     type: String,
-    enum: ['listing', 'video'],
+    enum: ['listing', 'image', 'video'],
     default: 'listing'
   },
   creativeHeadline: { type: String, trim: true, maxlength: 100, default: '' },
   creativeCopy: { type: String, trim: true, maxlength: 220, default: '' },
   creativeMediaUrl: { type: String, trim: true, maxlength: 600, default: '' },
   creativeCtaLabel: { type: String, trim: true, maxlength: 40, default: 'View product' },
+  creativeSafetyDeclared: { type: Boolean, default: false },
+  creativeSafetyReviewedAt: Date,
+  creativeSafetyReviewedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
   creativeReviewStatus: {
     type: String,
     enum: ['not_required', 'pending', 'approved', 'rejected'],

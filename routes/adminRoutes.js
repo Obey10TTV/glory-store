@@ -655,19 +655,26 @@ router.put('/promotions/:id/creative-review', protect, admin, async (req, res) =
 
     const promotion = await Promotion.findOne({
       _id: req.params.id,
-      placement: 'homepage_video',
+      placement: { $in: ['homepage_video', 'homepage_hero'] },
       status: 'pending_review',
       creativeReviewStatus: 'pending'
     })
-    if (!promotion) return res.status(404).json({ message: 'Pending video campaign not found.' })
+    if (!promotion) return res.status(404).json({ message: 'Pending campaign not found.' })
+    if (decision === 'approved' && !promotion.creativeSafetyDeclared) {
+      return res.status(409).json({ message: 'This creative is missing the seller safety declaration and cannot be approved.' })
+    }
 
     promotion.creativeReviewStatus = decision
     promotion.creativeReviewNote = note
+    if (decision === 'approved') {
+      promotion.creativeSafetyReviewedAt = new Date()
+      promotion.creativeSafetyReviewedBy = req.user._id
+    }
     promotion.status = decision === 'approved' ? 'approved_for_payment' : 'cancelled'
     if (decision === 'rejected') promotion.failureReason = note || 'Campaign creative did not meet Glory advertising requirements.'
     await promotion.save()
     await recordAudit(req, {
-      action: `homepage_video_${decision}`,
+      action: `${promotion.placement}_${decision}`,
       entityType: 'promotion',
       entityId: promotion._id.toString(),
       summary: `${decision === 'approved' ? 'Approved for payment' : 'Rejected'}: ${promotion.creativeHeadline}`

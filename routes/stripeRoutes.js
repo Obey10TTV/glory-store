@@ -791,7 +791,7 @@ router.post('/seller/promotions/homepage', protect, verifiedSeller, validateProm
       await existing.save()
     }
 
-    if (plan.placement === 'homepage_video') {
+    if (plan.requiresCreative) {
       const draft = await Promotion.findOne({
         _id: req.body.promotionId,
         seller: req.user._id,
@@ -880,7 +880,7 @@ router.post('/seller/promotions/homepage', protect, verifiedSeller, validateProm
     res.json({ url: session.url, sessionId: session.id })
   } catch (error) {
     if (promotion && promotion.status === 'pending_payment') {
-      promotion.status = promotion.creativeType === 'video' ? 'approved_for_payment' : 'failed'
+      promotion.status = promotion.creativeReviewStatus === 'approved' ? 'approved_for_payment' : 'failed'
       promotion.failureReason = 'The promotion payment session could not be created.'
       promotion.slotNumber = undefined
       await promotion.save().catch(() => undefined)

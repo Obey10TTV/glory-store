@@ -84,6 +84,15 @@ test('homepage promotion pricing is server controlled', () => {
   assert.ok(Number.isInteger(plan.durationDays) && plan.durationDays >= 1)
 })
 
+test('Brand Feature campaigns are separate reviewed hero-carousel inventory', () => {
+  const plan = getPromotionPlan('homepage_hero_7', 'US')
+  assert.equal(plan.placement, 'homepage_hero')
+  assert.equal(plan.requiresCreative, true)
+  assert.equal(plan.durationDays, 7)
+  assert.equal(plan.currency, 'USD')
+  assert.ok(plan.feeMinor >= 100)
+})
+
 test('seller plans preserve a free entry tier while charging for scale', () => {
   const plans = getSellerPlans('GB')
   assert.deepEqual(plans.map(plan => plan.code), ['starter', 'studio', 'scale', 'partner'])

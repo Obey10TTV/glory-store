@@ -1,20 +1,22 @@
 const Promotion = require('../models/promotion')
 
 const readPromotionCapacity = (marketCode = 'GB', placement = 'homepage_featured') => {
-  const placementKey = placement === 'homepage_video' ? 'VIDEO' : 'SPOTLIGHT'
+  const placementKey = placement === 'homepage_hero'
+    ? 'HERO'
+    : (placement === 'homepage_video' ? 'VIDEO' : 'SPOTLIGHT')
   const configured = Number.parseInt(
     process.env[`${marketCode}_${placementKey}_CAPACITY`]
       || process.env[`HOMEPAGE_${placementKey}_CAPACITY`],
     10
   )
-  const defaultCapacity = placement === 'homepage_video' ? 1 : 4
+  const defaultCapacity = ['homepage_video', 'homepage_hero'].includes(placement) ? 1 : 4
   const requestedCapacity = Number.isInteger(configured) && configured >= 1 && configured <= 32
     ? configured
     : defaultCapacity
 
   // Homepage video is a premium takeover, rather than a crowded sequence of ads.
   // Spotlights stay intentionally limited so each paid placement remains visible.
-  return placement === 'homepage_video'
+  return ['homepage_video', 'homepage_hero'].includes(placement)
     ? 1
     : Math.min(requestedCapacity, 4)
 }
@@ -100,14 +102,14 @@ const releaseExpiredPromotionSlots = async (now = new Date()) => {
       { $set: { status: 'expired' }, $unset: { slotNumber: 1 } }
     ),
     Promotion.updateMany(
-      { status: 'pending_payment', createdAt: { $lte: pendingExpiry }, creativeType: 'video' },
+      { status: 'pending_payment', createdAt: { $lte: pendingExpiry }, creativeReviewStatus: 'approved' },
       {
         $set: { status: 'approved_for_payment', failureReason: 'The payment reservation expired. Choose another available date to continue.' },
         $unset: { slotNumber: 1 }
       }
     ),
     Promotion.updateMany(
-      { status: 'pending_payment', createdAt: { $lte: pendingExpiry }, creativeType: { $ne: 'video' } },
+      { status: 'pending_payment', createdAt: { $lte: pendingExpiry }, creativeReviewStatus: { $ne: 'approved' } },
       {
         $set: { status: 'failed', failureReason: 'The promotion payment reservation expired.' },
         $unset: { slotNumber: 1 }

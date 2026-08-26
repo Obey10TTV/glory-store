@@ -258,10 +258,10 @@ const getSellerPlan = (code, marketCode) => (
 )
 
 const promotionPrices = {
-  NG: { spotlight7: 500000, spotlight30: 1500000, video7: 2500000, video30: 7500000 },
-  GB: { spotlight7: 8900, spotlight30: 24900, video7: 19900, video30: 54900 },
-  US: { spotlight7: 9900, spotlight30: 27900, video7: 24900, video30: 69900 },
-  CA: { spotlight7: 12900, spotlight30: 34900, video7: 31900, video30: 84900 }
+  NG: { spotlight7: 500000, spotlight30: 1500000, video7: 2500000, video30: 7500000, hero7: 20000000 },
+  GB: { spotlight7: 8900, spotlight30: 24900, video7: 19900, video30: 54900, hero7: 35000 },
+  US: { spotlight7: 9900, spotlight30: 27900, video7: 24900, video30: 69900, hero7: 45000 },
+  CA: { spotlight7: 12900, spotlight30: 34900, video7: 31900, video30: 84900, hero7: 60000 }
 }
 
 const readPromotionPrice = (marketCode, key, fallback) => readInteger(
@@ -286,7 +286,7 @@ const getPromotionPlans = (marketCode) => {
     billingProvider: market.billingProvider,
     durationDays,
     recommended,
-    requiresCreative: placement === 'homepage_video'
+    requiresCreative: placement !== 'homepage_featured'
   })
 
   return [
@@ -306,6 +306,14 @@ const getPromotionPlans = (marketCode) => {
       description: "One approved listing in Glory's clearly labelled Sponsored homepage edit for 30 days.",
       amount: readPromotionPrice(market.code, 'SPOTLIGHT_30', prices.spotlight30),
       durationDays: 30
+    }),
+    buildPlan({
+      code: 'homepage_hero_7',
+      placement: 'homepage_hero',
+      label: 'Homepage Brand Feature',
+      description: 'One reviewed, clearly labelled brand campaign within the Glory homepage carousel for 7 days.',
+      amount: readPromotionPrice(market.code, 'HERO_7', prices.hero7),
+      durationDays: 7
     }),
     buildPlan({
       code: 'homepage_video_7',

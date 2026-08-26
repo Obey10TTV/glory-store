@@ -635,7 +635,15 @@ const validatePromotionCheckout = [
   body('creativeMediaUrl')
     .optional({ checkFalsy: true })
     .isURL({ protocols: ['https'], require_protocol: true })
-    .withMessage('Upload a secure campaign video first'),
+    .withMessage('Upload a secure campaign creative first'),
+  body('creativeMediaType')
+    .optional({ checkFalsy: true })
+    .isIn(['image', 'video'])
+    .withMessage('Choose a valid campaign creative type'),
+  body('creativeSafetyDeclaration')
+    .optional()
+    .isBoolean()
+    .withMessage('Confirm the campaign safety declaration'),
   body('creativeCtaLabel')
     .optional({ checkFalsy: true })
     .trim()
