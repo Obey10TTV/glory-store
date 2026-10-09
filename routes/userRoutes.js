@@ -30,6 +30,7 @@ const {
 } = require('../utils/otp')
 const { getGoogleAuthOptions, verifyGoogleCredential } = require('../utils/googleAuth')
 const { sendOtpEmail, sendPrivacyRequestEmail } = require('../utils/email')
+const { logger, sanitizeErrorMessage } = require('../middleware/logger')
 const { recordAudit } = require('../utils/audit')
 const { getRequiredSellerDocumentTypes, hasVerifiedSellerIdentity } = require('../utils/sellerVerification')
 const {
@@ -115,6 +116,28 @@ const sendEmailVerification = (user) => (
     'verify-email'
   )
 )
+
+const sendEmailVerificationSafely = async (user) => {
+  try {
+    await sendEmailVerification(user)
+    return true
+  } catch (error) {
+    logger.error({
+      type: 'VERIFICATION_EMAIL_FAILED',
+      userId: user._id,
+      message: sanitizeErrorMessage(error.message)
+    })
+    return false
+  }
+}
+
+const verificationDeliveryFailure = (res, user, status = 503) => res.status(status).json({
+  requiresEmailVerification: true,
+  verificationDeliveryFailed: true,
+  email: user.email,
+  isSeller: Boolean(user.isSeller),
+  message: 'Your account was saved, but the verification email could not be delivered. Try sending a new code shortly.'
+})
 
 const ensureTwoFactor = (user) => {
   if (!user.twoFactor) {
@@ -254,7 +277,9 @@ router.post('/register', validateRegister, handleValidationErrors, async (req, r
 
     if (userExists) {
       if (userExists.isEmailVerified === false) {
-        await sendEmailVerification(userExists)
+        if (!(await sendEmailVerificationSafely(userExists))) {
+          return verificationDeliveryFailure(res, userExists)
+        }
         return res.status(202).json({
           requiresEmailVerification: true,
           email: userExists.email,
@@ -281,7 +306,9 @@ router.post('/register', validateRegister, handleValidationErrors, async (req, r
       } : undefined
     })
 
-    await sendEmailVerification(user)
+    if (!(await sendEmailVerificationSafely(user))) {
+      return verificationDeliveryFailure(res, user)
+    }
 
     res.status(201).json({
       requiresEmailVerification: true,
@@ -312,7 +339,9 @@ router.post('/login', validateLogin, handleValidationErrors, async (req, res) =>
     }
 
     if (user.isEmailVerified === false) {
-      await sendEmailVerification(user)
+      if (!(await sendEmailVerificationSafely(user))) {
+        return verificationDeliveryFailure(res, user)
+      }
       return res.status(403).json({
         requiresEmailVerification: true,
         email: user.email,
@@ -466,7 +495,9 @@ router.post('/resend-verification', validateEmailOnly, handleValidationErrors, a
     const user = await User.findOne({ email })
 
     if (user && user.isEmailVerified === false) {
-      await sendEmailVerification(user)
+      if (!(await sendEmailVerificationSafely(user))) {
+        return verificationDeliveryFailure(res, user)
+      }
     }
 
     res.json({

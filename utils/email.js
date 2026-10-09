@@ -2,33 +2,54 @@ const nodemailer = require('nodemailer')
 const { logger } = require('../middleware/logger')
 
 let transporter
+let transporterSignature
+
+const getEmailTransportConfig = (env = process.env) => {
+  const resendApiKey = String(env.RESEND_API_KEY || '').trim()
+  const from = String(env.EMAIL_FROM || env.SMTP_FROM || '').trim()
+
+  if (resendApiKey) {
+    return {
+      provider: 'resend',
+      from,
+      transport: {
+        host: 'smtp.resend.com',
+        port: 465,
+        secure: true,
+        auth: { user: 'resend', pass: resendApiKey }
+      }
+    }
+  }
+
+  const host = String(env.SMTP_HOST || '').trim()
+  const port = Number(env.SMTP_PORT)
+  const user = String(env.SMTP_USER || '').trim()
+  const pass = String(env.SMTP_PASS || '').trim()
+  if (!host || !Number.isInteger(port) || !user || !pass) return null
+
+  return {
+    provider: 'smtp',
+    from: from || user,
+    transport: {
+      host,
+      port,
+      secure: env.SMTP_SECURE === 'true',
+      auth: { user, pass }
+    }
+  }
+}
 
 const getTransporter = () => {
-  const {
-    SMTP_HOST,
-    SMTP_PORT,
-    SMTP_SECURE,
-    SMTP_USER,
-    SMTP_PASS
-  } = process.env
+  const config = getEmailTransportConfig()
+  if (!config) return null
 
-  if (!SMTP_HOST || !SMTP_PORT || !SMTP_USER || !SMTP_PASS) {
-    return null
+  const signature = JSON.stringify(config.transport)
+  if (!transporter || transporterSignature !== signature) {
+    transporter = nodemailer.createTransport(config.transport)
+    transporterSignature = signature
   }
 
-  if (!transporter) {
-    transporter = nodemailer.createTransport({
-      host: SMTP_HOST,
-      port: Number(SMTP_PORT),
-      secure: SMTP_SECURE === 'true',
-      auth: {
-        user: SMTP_USER,
-        pass: SMTP_PASS
-      }
-    })
-  }
-
-  return transporter
+  return { mailer: transporter, from: config.from }
 }
 
 const purposeLabels = {
@@ -40,11 +61,10 @@ const purposeLabels = {
 }
 
 const sendOtpEmail = async ({ to, code, purpose = 'verify-email' }) => {
-  const mailer = getTransporter()
+  const emailTransport = getTransporter()
   const subject = purposeLabels[purpose] || 'Your Glory verification code'
-  const from = process.env.SMTP_FROM || process.env.SMTP_USER
 
-  if (!mailer) {
+  if (!emailTransport?.mailer || !emailTransport.from) {
     if (process.env.NODE_ENV === 'production') {
       throw new Error('Email service is not configured')
     }
@@ -59,8 +79,8 @@ const sendOtpEmail = async ({ to, code, purpose = 'verify-email' }) => {
     return
   }
 
-  await mailer.sendMail({
-    from,
+  await emailTransport.mailer.sendMail({
+    from: emailTransport.from,
     to,
     subject,
     text: `Your Glory verification code is ${code}. It expires in 10 minutes. If you did not request this, you can ignore this email.`,
@@ -78,8 +98,8 @@ const sendOtpEmail = async ({ to, code, purpose = 'verify-email' }) => {
 const sendOrderStatusEmail = async ({ order, status, trackingNumber = '' }) => {
   const to = order.buyer?.email
   if (!to) return
-  const mailer = getTransporter()
-  if (!mailer) {
+  const emailTransport = getTransporter()
+  if (!emailTransport?.mailer || !emailTransport.from) {
     logger.info({ type: 'ORDER_EMAIL_SKIPPED', orderId: order._id, status })
     return
   }
@@ -87,8 +107,8 @@ const sendOrderStatusEmail = async ({ order, status, trackingNumber = '' }) => {
   const orderNumber = order._id.toString().slice(-8).toUpperCase()
   const trackingText = trackingNumber ? ` Tracking number: ${trackingNumber}.` : ''
   try {
-    await mailer.sendMail({
-      from: process.env.SMTP_FROM || process.env.SMTP_USER,
+    await emailTransport.mailer.sendMail({
+      from: emailTransport.from,
       to,
       subject: `Glory order #${orderNumber}: ${status}`,
       text: `Your Glory order is now ${status}.${trackingText}`,
@@ -100,14 +120,14 @@ const sendOrderStatusEmail = async ({ order, status, trackingNumber = '' }) => {
 }
 
 const sendPrivacyRequestEmail = async ({ to, name, action }) => {
-  const mailer = getTransporter()
-  if (!mailer) {
+  const emailTransport = getTransporter()
+  if (!emailTransport?.mailer || !emailTransport.from) {
     logger.info({ type: 'PRIVACY_EMAIL_SKIPPED', to, action })
     return
   }
   const requested = action === 'requested'
-  await mailer.sendMail({
-    from: process.env.SMTP_FROM || process.env.SMTP_USER,
+  await emailTransport.mailer.sendMail({
+    from: emailTransport.from,
     to,
     subject: requested ? 'Glory account deletion request received' : 'Glory account deletion request cancelled',
     text: requested
@@ -119,8 +139,8 @@ const sendPrivacyRequestEmail = async ({ to, name, action }) => {
 
 const sendTrustSafetyAlert = async ({ reportId, listingId, reason, priority, triageDueAt }) => {
   const to = String(process.env.TRUST_SAFETY_EMAIL || '').trim()
-  const mailer = getTransporter()
-  if (!to || !mailer) {
+  const emailTransport = getTransporter()
+  if (!to || !emailTransport?.mailer || !emailTransport.from) {
     logger.warn({
       type: 'TRUST_SAFETY_ALERT_SKIPPED',
       reportId,
@@ -130,8 +150,8 @@ const sendTrustSafetyAlert = async ({ reportId, listingId, reason, priority, tri
     return false
   }
 
-  await mailer.sendMail({
-    from: process.env.SMTP_FROM || process.env.SMTP_USER,
+  await emailTransport.mailer.sendMail({
+    from: emailTransport.from,
     to,
     subject: `[${String(priority).toUpperCase()}] Glory listing report requires triage`,
     text: `Report ${reportId} concerns listing ${listingId}. Category: ${reason}. First triage is due by ${new Date(triageDueAt).toISOString()}. Open the protected admin queue to review the evidence.`,
@@ -140,4 +160,4 @@ const sendTrustSafetyAlert = async ({ reportId, listingId, reason, priority, tri
   return true
 }
 
-module.exports = { sendOtpEmail, sendOrderStatusEmail, sendPrivacyRequestEmail, sendTrustSafetyAlert }
+module.exports = { getEmailTransportConfig, sendOtpEmail, sendOrderStatusEmail, sendPrivacyRequestEmail, sendTrustSafetyAlert }
