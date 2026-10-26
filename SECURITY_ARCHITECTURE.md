@@ -9,7 +9,7 @@ flowchart LR
   R -->|verified session and policy checks| M[(MongoDB Atlas)]
   R --> C[Cloudinary authenticated documents]
   R --> I[Stripe Identity]
-  R --> P[Stripe and Paystack]
+  R --> P[Stripe]
   R --> G[Google ID token verification]
   R --> E[SMTP provider]
 ```
@@ -34,7 +34,7 @@ Set these only in Railway, never in Git or Vercel frontend variables:
 - `RATE_LIMIT_KEY_SECRET`, `LOG_HASH_SECRET` and `SESSION_IP_SALT`: distinct random values, at least 32 characters.
 - `JWT_ISSUER=glory-store-api`, `JWT_AUDIENCE=glory-web`, `SESSION_IDLE_HOURS=24`, `BCRYPT_ROUNDS=12`.
 - `CORS_ORIGINS`: exact frontend origins, for example `https://glory-ca.vercel.app` and any approved custom domain.
-- Provider secrets only for services currently enabled. Remove unused Stripe, Paystack, SMTP and Cloudinary credentials.
+- Provider secrets only for services currently enabled. Remove unused Stripe, SMTP and Cloudinary credentials.
 
 ## Required dashboard configuration
 
@@ -42,5 +42,5 @@ Set these only in Railway, never in Git or Vercel frontend variables:
 2. Railway: set production variables, keep only the web service public, do not expose MongoDB/Redis ports, add a Redis service for rate-limit storage, set spend alerts and restrict project access with MFA.
 3. Vercel: retain `glory-ca.vercel.app` as the only production alias unless intentionally changed, enable deployment protection for previews, restrict team membership, and configure only public `VITE_*` values.
 4. Cloudinary: require authenticated delivery for documents, disable unsigned presets, set upload presets/folder restrictions, enable moderation or malware scanning where available.
-5. Stripe/Paystack: verify live webhook secrets, use restricted keys, enable provider fraud controls and billing alerts, and never mark payments paid from a browser callback alone.
+5. Stripe: verify live webhook secrets, use restricted keys, enable provider fraud controls and billing alerts, and never mark payments paid from a browser callback alone.
 6. Domain and email: registrar lock, MFA/passkeys, DNSSEC where supported, SPF, DKIM and DMARC with monitoring.

@@ -83,14 +83,14 @@ const productSchema = new mongoose.Schema({
   price: { type: Number, required: true },
   marketCode: {
     type: String,
-    enum: ['NG', 'GB', 'US', 'CA'],
+    enum: ['GB', 'US', 'CA'],
     default: 'GB',
     required: true,
     index: true
   },
   currency: {
     type: String,
-    enum: ['NGN', 'GBP', 'USD', 'CAD'],
+    enum: ['GBP', 'USD', 'CAD'],
     default: 'GBP',
     required: true
   },

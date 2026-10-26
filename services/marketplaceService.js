@@ -1,10 +1,7 @@
-const MARKET_CODES = ['NG', 'GB', 'US', 'CA']
-const KNOWN_PAYMENT_METHODS = ['card', 'bank_transfer', 'ussd', 'crypto', 'cash_on_delivery']
+const MARKET_CODES = ['GB', 'US', 'CA']
+const KNOWN_PAYMENT_METHODS = ['card', 'bank_transfer', 'crypto', 'cash_on_delivery']
 
 const MARKET_ALIASES = {
-  NG: 'NG',
-  NGA: 'NG',
-  NIGERIA: 'NG',
   GB: 'GB',
   GBR: 'GB',
   UK: 'GB',
@@ -23,29 +20,14 @@ const readInteger = (value, fallback, { min = 0, max = Number.MAX_SAFE_INTEGER }
   return parsed
 }
 
-const normalizeMarketCode = (value, fallback = 'NG') => {
+const normalizeMarketCode = (value, fallback = 'GB') => {
   const normalized = MARKET_ALIASES[String(value || '').trim().toUpperCase()]
-  return normalized || (MARKET_CODES.includes(fallback) ? fallback : 'NG')
+  return normalized || (MARKET_CODES.includes(fallback) ? fallback : 'GB')
 }
 
-const getDefaultMarketCode = () => normalizeMarketCode(process.env.DEFAULT_MARKET_CODE, 'NG')
+const getDefaultMarketCode = () => normalizeMarketCode(process.env.DEFAULT_MARKET_CODE, 'GB')
 
 const marketDefinitions = {
-  NG: {
-    code: 'NG',
-    slug: 'ng',
-    name: 'Nigeria',
-    locale: 'en-NG',
-    currency: 'NGN',
-    currencyName: 'Nigerian naira',
-    billingProvider: 'paystack',
-    starterListingLimit: 10,
-    servicePaymentMethods: [
-      { code: 'card', label: 'Card', description: 'Visa, Mastercard, Verve and supported international cards through Paystack.' },
-      { code: 'bank_transfer', label: 'Bank transfer', description: 'A time-limited Paystack transfer account when available.' },
-      { code: 'ussd', label: 'USSD', description: 'Supported Nigerian bank USSD channels through Paystack.' }
-    ]
-  },
   GB: {
     code: 'GB',
     slug: 'gb',
@@ -92,29 +74,18 @@ const getMarketDefinition = (marketCode) => {
   return marketDefinitions[code]
 }
 
-const isBillingProviderEnabled = (provider) => (
-  provider === 'paystack'
-    ? Boolean(process.env.PAYSTACK_SECRET_KEY)
-    : Boolean(process.env.STRIPE_SECRET_KEY)
-)
+const isBillingProviderEnabled = () => Boolean(process.env.STRIPE_SECRET_KEY)
 
 const getSellerAcceptedPaymentMethods = (marketCode) => {
   const market = getMarketDefinition(marketCode)
-  if (market.code === 'NG') {
-    return [
-      { code: 'card', label: 'Card or payment link', description: 'Use a trusted provider link that supports Visa, Mastercard or Verve.' },
-      { code: 'bank_transfer', label: 'Bank transfer', description: 'Agree account details and delivery only inside the Glory conversation.' },
-      { code: 'ussd', label: 'USSD', description: 'Available when the seller uses a supported Nigerian payment provider.' },
-      { code: 'cash_on_delivery', label: 'Pay on collection or delivery', description: 'Only where the seller clearly offers it and the handover is safe.' },
-      { code: 'crypto', label: 'Crypto', description: 'Seller arranged. Confirm the network and amount carefully because transfers may be irreversible.' }
-    ]
-  }
-  return [
+  const cryptoPaymentsEnabled = process.env.CRYPTO_SELLER_PAYMENTS_ENABLED === 'true'
+  const methods = [
     { code: 'card', label: 'Card or payment link', description: 'Use the seller\'s trusted provider link for Visa, Mastercard or another supported card.' },
     { code: 'bank_transfer', label: 'Bank transfer', description: 'Agree account details and delivery only inside the Glory conversation.' },
-    { code: 'cash_on_delivery', label: 'Pay on collection or delivery', description: 'Only where the seller clearly offers it and the handover is safe.' },
-    { code: 'crypto', label: 'Crypto', description: 'Seller arranged. Confirm the network and amount carefully because transfers may be irreversible.' }
+    { code: 'cash_on_delivery', label: 'Pay on collection or delivery', description: 'Only where the seller clearly offers it and the handover is safe.' }
   ]
+  if (cryptoPaymentsEnabled) methods.push({ code: 'crypto', label: 'Crypto', description: 'Seller arranged. Confirm the network and amount carefully because transfers may be irreversible.' })
+  return methods
 }
 
 const getMarketplaceConfig = (marketCode) => {
@@ -165,7 +136,6 @@ const readPlanPrice = (marketCode, planCode, fallback) => {
 }
 
 const planPrices = {
-  NG: { studio: 750000, scale: 2200000, partner: 6000000 },
   GB: { studio: 5900, scale: 14900, partner: 39900 },
   US: { studio: 6900, scale: 17900, partner: 44900 },
   CA: { studio: 8900, scale: 22900, partner: 56900 }
@@ -188,9 +158,7 @@ const getSellerPlans = (marketCode) => {
     {
       code: 'starter',
       label: 'Starter',
-      description: market.code === 'NG'
-        ? 'A generous free start for emerging Nigerian beauty entrepreneurs.'
-        : 'A verified entry tier for independent sellers building their first Glory catalogue.',
+      description: 'A verified entry tier for independent sellers building their first Glory catalogue.',
       feeMinor: 0,
       feePence: 0,
       currency: market.currency,
@@ -258,7 +226,6 @@ const getSellerPlan = (code, marketCode) => (
 )
 
 const promotionPrices = {
-  NG: { spotlight7: 500000, spotlight30: 1500000, video7: 2500000, video30: 7500000, hero7: 20000000 },
   GB: { spotlight7: 8900, spotlight30: 24900, video7: 19900, video30: 54900, hero7: 35000 },
   US: { spotlight7: 9900, spotlight30: 27900, video7: 24900, video30: 69900, hero7: 45000 },
   CA: { spotlight7: 12900, spotlight30: 34900, video7: 31900, video30: 84900, hero7: 60000 }
@@ -376,7 +343,7 @@ const normalizePaymentMethods = (methods, fallback = ['card'], marketCode) => {
 }
 
 const orderValueToMethodCode = (value, marketCode) => {
-  const orderMap = { Stripe: 'card', Paystack: 'card', PayOnDelivery: 'cash_on_delivery', Crypto: 'crypto' }
+  const orderMap = { Stripe: 'card', PayOnDelivery: 'cash_on_delivery', Crypto: 'crypto' }
   const method = orderMap[value] || null
   if (!method) return null
   const allowed = new Set(getSellerAcceptedPaymentMethods(marketCode).map((item) => item.code))

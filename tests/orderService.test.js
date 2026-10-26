@@ -22,7 +22,7 @@ test('checkout totals are calculated from authoritative line items', () => {
 })
 
 test('international delivery uses the global rate and threshold', () => {
-  assert.deepEqual(calculateTotals([{ price: 25, quantity: 2 }], 'Nigeria'), {
+  assert.deepEqual(calculateTotals([{ price: 25, quantity: 2 }], 'France'), {
     itemsPrice: 50,
     shippingPrice: 14.95,
     totalPrice: 64.95

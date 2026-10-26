@@ -66,7 +66,7 @@ router.get('/', async (req, res) => {
     const page = Math.max(1, Number.parseInt(req.query.page, 10) || 1)
     const limit = Math.min(48, Math.max(1, Number.parseInt(req.query.limit, 10) || 24))
     const query = { approvalStatus: 'approved', planVisibilityStatus: { $ne: 'paused' } }
-    if (req.query.market) query.marketCode = normalizeMarketCode(req.query.market, 'NG')
+    if (req.query.market) query.marketCode = normalizeMarketCode(req.query.market, 'GB')
     const q = String(req.query.q || '').trim().slice(0, 100)
     if (q) {
       const escaped = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')

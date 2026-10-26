@@ -43,13 +43,13 @@ const publicPromotionPlan = (plan) => ({
 
 router.get('/markets', (req, res) => {
   res.json({
-    defaultMarketCode: normalizeMarketCode(process.env.DEFAULT_MARKET_CODE, 'NG'),
+    defaultMarketCode: normalizeMarketCode(process.env.DEFAULT_MARKET_CODE, 'GB'),
     items: getPublicMarkets()
   })
 })
 
 router.get('/config', (req, res) => {
-  const marketCode = normalizeMarketCode(req.query.market, 'NG')
+  const marketCode = normalizeMarketCode(req.query.market, 'GB')
   const marketplace = getMarketplaceConfig(marketCode)
   res.json({
     ...marketplace,

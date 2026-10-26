@@ -201,7 +201,7 @@ const userSchema = new mongoose.Schema({
     },
     marketCode: {
       type: String,
-      enum: ['NG', 'GB', 'US', 'CA'],
+      enum: ['GB', 'US', 'CA'],
       default: 'GB',
       index: true
     },
@@ -307,7 +307,7 @@ const userSchema = new mongoose.Schema({
     },
     activationCurrency: {
       type: String,
-      enum: ['NGN', 'GBP', 'USD', 'CAD'],
+      enum: ['GBP', 'USD', 'CAD'],
       default: 'GBP'
     },
     activationPaymentReference: {
@@ -334,12 +334,12 @@ const userSchema = new mongoose.Schema({
     },
     membershipProvider: {
       type: String,
-      enum: ['none', 'stripe', 'paystack'],
+      enum: ['none', 'stripe'],
       default: 'none'
     },
     membershipCurrency: {
       type: String,
-      enum: ['NGN', 'GBP', 'USD', 'CAD'],
+      enum: ['GBP', 'USD', 'CAD'],
       default: 'GBP'
     },
     membershipPaymentReference: {

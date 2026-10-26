@@ -234,7 +234,7 @@ const products = [
     description: 'Hand-poured soy wax candle with shea butter and coconut fragrance. 40-hour burn time.',
     category: 'Scented Candles',
     image: 'https://images.pexels.com/photos/3270223/pexels-photo-3270223.jpeg?auto=compress&cs=tinysrgb&w=400',
-    brand: 'Lagos Lights',
+    brand: 'Harbour Lights',
     countInStock: 25
   },
   {
@@ -243,7 +243,7 @@ const products = [
     description: 'Premium oud and amber scented candle in a reusable glass jar. Creates a warm luxurious atmosphere.',
     category: 'Scented Candles',
     image: 'https://images.pexels.com/photos/3270223/pexels-photo-3270223.jpeg?auto=compress&cs=tinysrgb&w=400',
-    brand: 'Abuja Aroma',
+    brand: 'Meadow Aroma',
     countInStock: 20
   },
 

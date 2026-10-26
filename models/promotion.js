@@ -5,7 +5,7 @@ const promotionSchema = new mongoose.Schema({
   listing: { type: mongoose.Schema.Types.ObjectId, ref: 'Product', required: true, index: true },
   marketCode: {
     type: String,
-    enum: ['NG', 'GB', 'US', 'CA'],
+    enum: ['GB', 'US', 'CA'],
     default: 'GB',
     required: true,
     index: true
@@ -56,7 +56,7 @@ const promotionSchema = new mongoose.Schema({
   },
   paymentProvider: {
     type: String,
-    enum: ['stripe', 'paystack'],
+    enum: ['stripe'],
     default: 'stripe'
   },
   paymentReference: { type: String, trim: true, default: '', select: false },

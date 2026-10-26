@@ -32,7 +32,7 @@ const requireTrustedBrowserOrigin = (req, res, next) => {
   if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) return next()
 
   // Webhooks are authenticated using the provider's signed raw body, not a browser Origin.
-  if (['/api/paystack/webhook', '/api/stripe/webhook'].includes(req.originalUrl)) return next()
+  if (req.originalUrl === '/api/stripe/webhook') return next()
 
   const origin = req.get('origin')
   if (!origin || isAllowedOrigin(origin)) return next()

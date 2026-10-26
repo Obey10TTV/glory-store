@@ -5,14 +5,14 @@
 - Account credentials, sessions, recovery codes and MFA state.
 - Seller identity-verification state and private business documents.
 - Listings, moderation evidence, messages, reports, reviews and audit trails.
-- Stripe, Paystack, Cloudinary, Google and SMTP credentials.
+- Stripe, Cloudinary, Google and SMTP credentials.
 - Platform revenue data and promotion purchase state.
 
 ## Trust boundaries
 
 1. Browser to Vercel: public code and all client state are untrusted.
 2. Vercel rewrite or local browser to Railway: cookies, CSRF token and API requests cross this boundary.
-3. Railway to MongoDB, Cloudinary, Stripe, Paystack, Google and SMTP: credentials remain server-side.
+3. Railway to MongoDB, Cloudinary, Stripe, Google and SMTP: credentials remain server-side.
 4. Administrator browser to administrative routes: higher-assurance boundary requiring server-side MFA role checks.
 
 ## Primary threats and controls

@@ -33,7 +33,7 @@ const publicPlan = (plan) => ({
 })
 
 router.get('/plans', (req, res) => {
-  const marketCode = normalizeMarketCode(req.query.market, 'NG')
+  const marketCode = normalizeMarketCode(req.query.market, 'GB')
   res.json({ marketCode, items: getPromotionPlans(marketCode).map(publicPlan) })
 })
 
@@ -41,7 +41,7 @@ router.get('/homepage', async (req, res) => {
   try {
     await runPromotionMaintenance()
     const now = new Date()
-    const marketCode = normalizeMarketCode(req.query.market, 'NG')
+    const marketCode = normalizeMarketCode(req.query.market, 'GB')
     const findPublicPromotions = (placement, limit) => Promotion.find({
       marketCode,
       placement,

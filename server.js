@@ -13,7 +13,6 @@ const { randomUUID } = require('crypto')
 const userRoutes = require('./routes/userRoutes')
 const productRoutes = require('./routes/productRoutes')
 const orderRoutes = require('./routes/orderRoutes')
-const paystackRoutes = require('./routes/paystackRoutes')
 const stripeRoutes = require('./routes/stripeRoutes')
 const reviewRoutes = require('./routes/reviewRoutes')
 const uploadRoutes = require('./routes/uploadRoutes')
@@ -123,8 +122,6 @@ app.use(helmet({
 app.use(cors(corsOptions))
 app.use(requireTrustedBrowserOrigin)
 
-// Paystack signatures require the unparsed request bytes.
-app.post('/api/paystack/webhook', express.raw({ type: 'application/json' }), paystackRoutes.handleWebhook)
 // Stripe also verifies signatures against the exact request bytes.
 app.post('/api/stripe/webhook', express.raw({ type: 'application/json' }), stripeRoutes.handleWebhook)
 
@@ -151,7 +148,7 @@ app.use(generalLimiter)
 // Authenticated or financial data must never be shared through a browser or CDN cache.
 app.use([
   '/api/users', '/api/admin', '/api/orders', '/api/upload', '/api/conversations',
-  '/api/reports', '/api/reviews', '/api/paystack', '/api/stripe', '/api/skin-guide'
+  '/api/reports', '/api/reviews', '/api/stripe', '/api/skin-guide'
 ], (req, res, next) => {
   res.setHeader('Cache-Control', 'no-store, private')
   res.setHeader('Pragma', 'no-cache')
@@ -204,7 +201,6 @@ app.use('/api/users/2fa', otpAccountLimiter)
 app.use('/api/users', userRoutes)
 app.use('/api/products', productRoutes)
 app.use('/api/orders', orderRoutes)
-app.use('/api/paystack', paymentLimiter, paystackRoutes)
 app.use('/api/stripe', paymentLimiter, stripeRoutes)
 app.use('/api/reviews', reviewRoutes)
 app.use('/api/upload', uploadLimiter, uploadRoutes)

@@ -7,9 +7,6 @@ const csrfProtection = (req, res, next) => {
     return next()
   }
 
-  if (req.originalUrl === '/api/paystack/webhook') {
-    return next()
-  }
 
   const cookieToken = req.cookies?.[CSRF_COOKIE]
   const headerToken = req.get('x-csrf-token')

@@ -262,7 +262,7 @@ const validateRegister = [
     }),
   body('marketCode')
     .optional()
-    .isIn(['NG', 'GB', 'US', 'CA'])
+    .isIn(['GB', 'US', 'CA'])
     .withMessage('Choose an available Glory market'),
   body('startDate')
     .optional({ checkFalsy: true })
@@ -323,7 +323,7 @@ const validateGoogleAuth = [
     }),
   body('marketCode')
     .optional()
-    .isIn(['NG', 'GB', 'US', 'CA'])
+    .isIn(['GB', 'US', 'CA'])
     .withMessage('Choose an available Glory market'),
 ]
 
@@ -510,7 +510,7 @@ const validateProduct = [
     .withMessage('Low-stock threshold must be between 0 and 1000'),
   body('marketCode')
     .optional()
-    .isIn(['NG', 'GB', 'US', 'CA'])
+    .isIn(['GB', 'US', 'CA'])
     .withMessage('Choose an available Glory market'),
   body('acceptedPaymentMethods')
     .optional()
@@ -620,7 +620,7 @@ const validatePromotionCheckout = [
     .withMessage('Choose a valid promotion plan'),
   body('marketCode')
     .optional()
-    .isIn(['NG', 'GB', 'US', 'CA'])
+    .isIn(['GB', 'US', 'CA'])
     .withMessage('Choose an available Glory market'),
   body('creativeHeadline')
     .optional({ checkFalsy: true })
@@ -700,7 +700,7 @@ const validateOrder = [
     })
     .withMessage('Please provide a valid phone number'),
   body('paymentMethod')
-    .isIn(['Stripe', 'Paystack', 'PayOnDelivery'])
+    .isIn(['Stripe', 'PayOnDelivery'])
     .withMessage('Invalid payment method'),
 ]
 
@@ -784,7 +784,7 @@ const validateSellerProfile = [
     .withMessage('Unsupported payment method'),
   body('marketCode')
     .optional()
-    .isIn(['NG', 'GB', 'US', 'CA'])
+    .isIn(['GB', 'US', 'CA'])
     .withMessage('Choose an available Glory market'),
   body('submitForReview')
     .optional()

@@ -136,7 +136,7 @@ router.post('/', protect, requireDirectCheckout, validateOrder, handleValidation
         sellerAllocations,
         status: req.body.paymentMethod === 'PayOnDelivery' ? 'Processing' : 'Pending',
         stockReserved: true,
-        reservationExpiresAt: ['Paystack', 'Stripe'].includes(req.body.paymentMethod)
+        reservationExpiresAt: req.body.paymentMethod === 'Stripe'
           ? new Date(Date.now() + 30 * 60 * 1000)
           : undefined
       }], { session })

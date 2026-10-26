@@ -270,7 +270,7 @@ router.post('/logout', async (req, res) => {
 router.post('/register', validateRegister, handleValidationErrors, async (req, res) => {
   try {
     const { name, email, password, isSeller, brandName } = req.body
-    const marketCode = normalizeMarketCode(req.body.marketCode, 'NG')
+    const marketCode = normalizeMarketCode(req.body.marketCode, 'GB')
     const marketplace = getMarketplaceConfig(marketCode)
 
     const userExists = await User.findOne({ email })
@@ -382,7 +382,7 @@ router.post('/google', validateGoogleAuth, handleValidationErrors, async (req, r
         })
       }
 
-      const marketCode = normalizeMarketCode(req.body.marketCode, 'NG')
+      const marketCode = normalizeMarketCode(req.body.marketCode, 'GB')
       const marketplace = getMarketplaceConfig(marketCode)
       user = await User.create({
         name: profile.name,

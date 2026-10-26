@@ -25,6 +25,6 @@ test('campaign scheduling rejects past, malformed, and overlong bookings', () =>
 })
 
 test('homepage inventory is deliberately finite by placement type', () => {
-  assert.equal(readPromotionCapacity('NG', 'homepage_featured'), 4)
+  assert.equal(readPromotionCapacity('GB', 'homepage_featured'), 4)
   assert.equal(readPromotionCapacity('GB', 'homepage_video'), 1)
 })

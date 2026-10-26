@@ -16,6 +16,17 @@ test('classified marketplace mode is the safe default', () => {
   assert.equal(config.directCheckoutEnabled, false)
 })
 
+test('crypto seller payments stay disabled for the first public release', () => {
+  const previous = process.env.CRYPTO_SELLER_PAYMENTS_ENABLED
+  delete process.env.CRYPTO_SELLER_PAYMENTS_ENABLED
+  try {
+    assert.equal(getMarketplaceConfig('GB').sellerAcceptedPaymentMethods.some(method => method.code === 'crypto'), false)
+  } finally {
+    if (previous === undefined) delete process.env.CRYPTO_SELLER_PAYMENTS_ENABLED
+    else process.env.CRYPTO_SELLER_PAYMENTS_ENABLED = previous
+  }
+})
+
 test('public product JSON never exposes private listing evidence', () => {
   const product = new Product({
     name: 'Barrier Repair Serum',
@@ -116,15 +127,15 @@ test('promotion discounts are calculated on the server from an active membership
   assert.equal(price.sellerPlanCode, 'scale')
 })
 
-test('regional markets own their currencies, billing providers and accessible Nigerian entry tier', () => {
-  assert.deepEqual(getPublicMarkets().map((market) => market.code), ['NG', 'GB', 'US', 'CA'])
-  assert.equal(getMarketplaceConfig('NG').currency, 'NGN')
-  assert.equal(getMarketplaceConfig('NG').billingProvider, 'paystack')
+test('regional markets own their currencies and Stripe billing configuration', () => {
+  assert.deepEqual(getPublicMarkets().map((market) => market.code), ['GB', 'US', 'CA'])
+  assert.equal(getMarketplaceConfig('GB').currency, 'GBP')
+  assert.equal(getMarketplaceConfig('GB').billingProvider, 'stripe')
   assert.equal(getMarketplaceConfig('US').currency, 'USD')
   assert.equal(getMarketplaceConfig('CA').currency, 'CAD')
-  assert.equal(getSellerPlans('NG')[0].activeListingLimit, 10)
-  assert.equal(getSellerPlans('NG')[1].feeMinor, 750000)
-  assert.equal(getPromotionPlan('homepage_video_7', 'NG').feeMinor, 2500000)
+  assert.equal(getSellerPlans('GB')[0].activeListingLimit, 5)
+  assert.equal(getSellerPlans('GB')[1].feeMinor, 5900)
+  assert.equal(getPromotionPlan('homepage_video_7', 'GB').feeMinor, 19900)
 })
 
 test('public promotion JSON never exposes payment references', () => {

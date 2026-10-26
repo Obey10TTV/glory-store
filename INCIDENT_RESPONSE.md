@@ -4,7 +4,7 @@
 
 1. Assign an incident lead and record times, affected accounts and decisions in a private incident log.
 2. Contain: revoke affected Railway/Vercel/Atlas/provider sessions and API keys; disable risky API routes or payments if necessary.
-3. Rotate exposed secrets. Treat any disclosed MongoDB, Stripe, Paystack, Cloudinary, SMTP, Google OAuth or JWT secret as compromised.
+3. Rotate exposed secrets. Treat any disclosed MongoDB, Stripe, Cloudinary, SMTP, Google OAuth or JWT secret as compromised.
 4. Revoke affected Glory sessions using the account session controls or Atlas admin procedure, then require password reset and MFA reset where appropriate.
 5. Preserve evidence: Railway logs, Vercel deployment logs, Atlas audit data, Cloudinary access records and payment webhook IDs. Do not alter original evidence.
 

@@ -8,7 +8,7 @@ Date: 2026-08-20
 - API: Express 4 on Railway, using cookie-based access and refresh sessions.
 - Data: MongoDB via Mongoose. No ORM other than Mongoose.
 - Storage: Cloudinary. Seller documents use authenticated storage; government ID uploads are rejected and Stripe Identity is used instead.
-- Payments: Stripe and Paystack webhooks use raw-body signature verification.
+- Payments: Stripe webhooks use raw-body signature verification.
 - Identity: Google ID-token verification is server-side. Email OTP is used for verification and current two-factor authentication.
 - Email: SMTP through Nodemailer.
 - CI/CD, Docker, Redis, WAF, backup settings, Atlas network rules, Vercel and Railway dashboards: not present in either repository.

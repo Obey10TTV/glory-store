@@ -21,9 +21,8 @@ const run = ({ method = 'POST', cookie, header, url = '/api/orders' }) => {
   return { statusCode, payload, nextCalled }
 }
 
-test('CSRF middleware allows safe methods and webhook signatures', () => {
+test('CSRF middleware allows safe methods', () => {
   assert.equal(run({ method: 'GET' }).nextCalled, true)
-  assert.equal(run({ url: '/api/paystack/webhook' }).nextCalled, true)
 })
 
 test('CSRF middleware requires matching double-submit tokens', () => {
