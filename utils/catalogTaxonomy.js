@@ -89,6 +89,7 @@ const CATEGORY_PRODUCT_TYPES = Object.freeze({
   ],
   'Tools & Accessories': [
     'Brush',
+    'Comb',
     'Applicator',
     'Beauty Device',
     'Storage',
@@ -124,6 +125,12 @@ const productTypeAliases = Object.freeze({
     'lip glosses': 'Lip Gloss',
     foundations: 'Foundation',
     concealers: 'Concealer'
+  },
+  'Tools & Accessories': {
+    brush: 'Brush',
+    brushes: 'Brush',
+    comb: 'Comb',
+    combs: 'Comb'
   }
 })
 

@@ -15,6 +15,10 @@ test('haircare taxonomy normalises a conditioner alias for catalogue navigation'
 
 test('catalogue types remain scoped to their selected category', () => {
   assert.ok(getProductTypes('Haircare').includes('Conditioner'))
+  assert.ok(getProductTypes('Tools & Accessories').includes('Brush'))
+  assert.ok(getProductTypes('Tools & Accessories').includes('Comb'))
+  assert.equal(canonicalizeProductType('Tools & Accessories', 'brushes'), 'Brush')
+  assert.equal(canonicalizeProductType('Tools & Accessories', 'combs'), 'Comb')
   assert.equal(getProductTypes('Unknown category').length, 0)
 })
 
