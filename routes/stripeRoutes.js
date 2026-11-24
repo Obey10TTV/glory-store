@@ -1,7 +1,7 @@
 const express = require('express')
 const Stripe = require('stripe')
 const router = express.Router()
-const { protect, seller, verifiedSeller } = require('../middleware/auth')
+const { protect, seller, verifiedSeller, hasAdminAccess } = require('../middleware/auth')
 const Order = require('../models/order')
 const User = require('../models/user')
 const Product = require('../models/product')
@@ -50,9 +50,10 @@ const sellerCheckoutTaxSettings = () => (
 
 const checkoutSubtotal = (session) => Number(session.amount_subtotal ?? session.amount_total)
 
-const canAccessOrder = (order, user) => {
+const canAccessOrder = (order, req) => {
+  const { user } = req
   const buyerId = order.buyer?._id || order.buyer
-  return user.isAdmin || buyerId?.toString() === user._id.toString()
+  return hasAdminAccess(req) || buyerId?.toString() === user._id.toString()
 }
 
 const directCheckoutUnavailable = (res) => {
@@ -977,7 +978,7 @@ router.post('/initialize', protect, async (req, res) => {
 
     const order = await Order.findById(req.body.orderId)
     if (!order) return res.status(404).json({ message: 'Order not found' })
-    if (!canAccessOrder(order, req.user)) {
+    if (!canAccessOrder(order, req)) {
       return res.status(403).json({ message: 'Not authorized to pay this order' })
     }
     if (order.paymentMethod !== 'Stripe') {
@@ -1040,7 +1041,7 @@ router.get('/verify/:sessionId', protect, async (req, res) => {
     const session = await stripe.checkout.sessions.retrieve(req.params.sessionId)
     const order = await Order.findById(session.metadata?.orderId)
     if (!order) return res.status(404).json({ message: 'Order not found' })
-    if (!canAccessOrder(order, req.user)) {
+    if (!canAccessOrder(order, req)) {
       return res.status(403).json({ message: 'Not authorized to verify this order' })
     }
 

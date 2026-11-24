@@ -27,6 +27,7 @@ const authSessionSchema = new mongoose.Schema({
   createdAt: { type: Date, default: Date.now },
   lastUsedAt: { type: Date, default: Date.now },
   lastAuthenticatedAt: { type: Date, default: Date.now },
+  mfaVerified: { type: Boolean, default: false },
   expiresAt: { type: Date, required: true },
 }, { _id: false })
 

@@ -65,13 +65,14 @@ const getAuthPayload = (user) => {
   }
 }
 
-const establishSession = async (user, req, res) => {
+const establishSession = async (user, req, res, { mfaVerified = false } = {}) => {
   const now = Date.now()
   user.authSessions = (user.authSessions || [])
     .filter((session) => new Date(session.expiresAt).getTime() > now)
     .slice(-4)
 
   const { refreshToken, session } = createSession(req)
+  session.mfaVerified = mfaVerified
   user.authSessions.push(session)
   await user.save()
   setAuthCookies(res, { userId: user._id, sessionId: session.sessionId, refreshToken })
@@ -553,7 +554,7 @@ router.post('/2fa/verify-login', validateSecondFactor, handleValidationErrors, a
       return res.status(400).json({ message: result.message || 'Verification code is invalid or expired.' })
     }
 
-    await establishSession(verifiedUser, req, res)
+    await establishSession(verifiedUser, req, res, { mfaVerified: true })
     res.json(getAuthPayload(verifiedUser))
   } catch (error) {
     handleRouteError(res, error)
@@ -648,6 +649,7 @@ router.post('/2fa/disable/confirm', protect, validateOtpOnly, handleValidationEr
     }
 
     user.twoFactor.enabled = false
+    for (const session of user.authSessions) session.mfaVerified = false
     user.twoFactor.disable = {}
     user.twoFactor.login = {}
     user.twoFactor.recoveryCodeHashes = []

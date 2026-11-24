@@ -1,7 +1,7 @@
 const express = require('express')
 const router = express.Router()
 const Product = require('../models/product')
-const { protect, seller, verifiedSeller } = require('../middleware/auth')
+const { protect, seller, verifiedSeller, hasAdminAccess } = require('../middleware/auth')
 const {
   validateProduct,
   handleValidationErrors
@@ -34,13 +34,15 @@ const publicSellerFields = [
   'sellerProfile.responseTimeCommitment'
 ].join(' ')
 
-const canManageProduct = (product, user) => {
+const canManageProduct = (product, req) => {
+  const { user } = req
   const sellerId = product.seller?._id || product.seller
-  return user.isAdmin || sellerId?.toString() === user._id.toString()
+  return hasAdminAccess(req) || sellerId?.toString() === user._id.toString()
 }
 
-const getSellerListingBrand = (user, requestedBrand = '') => {
-  if (user.isAdmin) return String(requestedBrand || '').trim()
+const getSellerListingBrand = (req, requestedBrand = '') => {
+  const { user } = req
+  if (hasAdminAccess(req)) return String(requestedBrand || '').trim()
   return String(user.sellerProfile?.brandName || user.sellerProfile?.storeName || '').trim()
 }
 
@@ -139,7 +141,7 @@ router.get('/', async (req, res) => {
 // GET SELLER PRODUCTS - Seller/Admin only
 router.get('/mine', protect, seller, async (req, res) => {
   try {
-    const query = req.user.isAdmin ? {} : { seller: req.user._id }
+    const query = hasAdminAccess(req) ? {} : { seller: req.user._id }
     const products = await Product.find(query)
       .populate('seller', 'name email sellerProfile')
       .sort({ createdAt: -1 })
@@ -176,12 +178,12 @@ router.post('/', protect, verifiedSeller, validateProduct, handleValidationError
       image, imageProcessing, images, variants, brand, countInStock, lowStockThreshold, listingEvidence,
       acceptedPaymentMethods
     } = req.body
-    const listingBrand = getSellerListingBrand(req.user, brand)
+    const listingBrand = getSellerListingBrand(req, brand)
     const canonicalProductType = canonicalizeProductType(category, productType)
     if (!listingBrand) {
       return res.status(400).json({ message: 'Add a brand name to your seller profile before submitting a listing.' })
     }
-    if (!req.user.isAdmin) {
+    if (!hasAdminAccess(req)) {
       const sellerPlan = getEffectiveSellerPlan(req.user.sellerProfile)
       const currentListingCount = await Product.countDocuments({
         seller: req.user._id,
@@ -197,7 +199,7 @@ router.post('/', protect, verifiedSeller, validateProduct, handleValidationError
       }
     }
     const marketCode = normalizeMarketCode(
-      req.user.isAdmin ? req.body.marketCode : req.user.sellerProfile?.marketCode,
+      hasAdminAccess(req) ? req.body.marketCode : req.user.sellerProfile?.marketCode,
       'GB'
     )
     const marketplace = getMarketplaceConfig(marketCode)
@@ -213,17 +215,17 @@ router.post('/', protect, verifiedSeller, validateProduct, handleValidationError
       imageProcessing: prepareProductImageProcessing(cloudinary, imageProcessing, {
         originalImageUrl: image,
         userId: req.user._id.toString(),
-        isAdmin: req.user.isAdmin
+        isAdmin: hasAdminAccess(req)
       }),
       marketCode,
       currency: marketplace.currency,
       acceptedPaymentMethods: listingPaymentMethods,
       seller: req.user._id,
-      approvalStatus: req.user.isAdmin ? 'approved' : 'pending',
-      listingEvidence: prepareListingEvidence(listingEvidence, { reviewed: req.user.isAdmin }),
+      approvalStatus: hasAdminAccess(req) ? 'approved' : 'pending',
+      listingEvidence: prepareListingEvidence(listingEvidence, { reviewed: hasAdminAccess(req) }),
       submittedAt: new Date(),
-      approvedAt: req.user.isAdmin ? new Date() : undefined,
-      reviewedAt: req.user.isAdmin ? new Date() : undefined,
+      approvedAt: hasAdminAccess(req) ? new Date() : undefined,
+      reviewedAt: hasAdminAccess(req) ? new Date() : undefined,
       rejectionReason: ''
     })
     res.status(201).json(product)
@@ -239,7 +241,7 @@ router.put('/:id', protect, verifiedSeller, validateProduct, handleValidationErr
     if (!product) {
       return res.status(404).json({ message: 'Product not found' })
     }
-    if (!canManageProduct(product, req.user)) {
+    if (!canManageProduct(product, req)) {
       return res.status(403).json({ message: 'Not authorized to update this product' })
     }
 
@@ -258,15 +260,15 @@ router.put('/:id', protect, verifiedSeller, validateProduct, handleValidationErr
       product.imageProcessing = prepareProductImageProcessing(cloudinary, req.body.imageProcessing, {
         originalImageUrl: product.image,
         userId: req.user._id.toString(),
-        isAdmin: req.user.isAdmin
+        isAdmin: hasAdminAccess(req)
       })
     }
     product.productType = canonicalizeProductType(product.category, product.productType)
     if (!product.productType) {
       return res.status(400).json({ message: 'Choose a product type that belongs to the selected category.' })
     }
-    if (!req.user.isAdmin) {
-      const listingBrand = getSellerListingBrand(req.user)
+    if (!hasAdminAccess(req)) {
+      const listingBrand = getSellerListingBrand(req)
       if (!listingBrand) {
         return res.status(400).json({ message: 'Add a brand name to your seller profile before updating a listing.' })
       }
@@ -278,7 +280,7 @@ router.put('/:id', protect, verifiedSeller, validateProduct, handleValidationErr
       product.marketCode
     )
 
-    if (!req.user.isAdmin) {
+    if (!hasAdminAccess(req)) {
       product.approvalStatus = 'pending'
       product.rejectionReason = ''
       product.submittedAt = new Date()
@@ -303,11 +305,11 @@ router.delete('/:id', protect, seller, async (req, res) => {
     if (!product) {
       return res.status(404).json({ message: 'Product not found' })
     }
-    if (!canManageProduct(product, req.user)) {
+    if (!canManageProduct(product, req)) {
       return res.status(403).json({ message: 'Not authorized to delete this product' })
     }
     await Product.findByIdAndDelete(req.params.id)
-    if (!req.user.isAdmin) await enforceSellerPlanVisibility(req.user._id)
+    if (!hasAdminAccess(req)) await enforceSellerPlanVisibility(req.user._id)
     res.json({ message: 'Product deleted successfully' })
   } catch (error) {
     res.status(500).json({ message: error.message })

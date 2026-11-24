@@ -14,7 +14,7 @@ const protect = async (req, res, next) => {
   if (token) {
     try {
       const decoded = jwt.verify(token, process.env.JWT_SECRET, getJwtVerificationOptions())
-      if (decoded.type && decoded.type !== 'access') {
+      if (decoded.type !== 'access' || !Number.isFinite(decoded.exp)) {
         return res.status(401).json({ message: 'Not authorized, invalid token type' })
       }
       req.user = await User.findById(decoded.id).select(
@@ -36,6 +36,7 @@ const protect = async (req, res, next) => {
         return res.status(401).json({ message: 'Session has expired' })
       }
       req.authSessionId = decoded.sessionId
+      req.authSession = activeSession
       next()
     } catch (error) {
       return res.status(401).json({ message: 'Not authorized, token failed' })
@@ -45,23 +46,27 @@ const protect = async (req, res, next) => {
   }
 }
 
+const hasAdminAccess = (req) => Boolean(
+  req.user?.isAdmin && req.user.twoFactor?.enabled && req.authSession?.mfaVerified === true
+)
+
 // Admin only
 const admin = (req, res, next) => {
-  if (req.user && req.user.isAdmin && req.user.twoFactor?.enabled) {
+  if (hasAdminAccess(req)) {
     next()
   } else {
-    res.status(403).json({ message: 'Administrator access requires a verified administrator account with two-factor authentication.' })
+    res.status(403).json({ message: 'Sign in with two-factor authentication to access administrator features.' })
   }
 }
 
 const superAdmin = (req, res, next) => {
-  if (req.user?.isSuperAdmin && req.user.twoFactor?.enabled) return next()
+  if (req.user?.isSuperAdmin && hasAdminAccess(req)) return next()
   return res.status(403).json({ message: 'Not authorized for administrator role management.' })
 }
 
 // Seller only
 const seller = (req, res, next) => {
-  if (req.user && (req.user.isSeller || req.user.isAdmin)) {
+  if (req.user?.isSeller || hasAdminAccess(req)) {
     next()
   } else {
     res.status(403).json({ message: 'Not authorized as seller' })
@@ -70,7 +75,7 @@ const seller = (req, res, next) => {
 
 // Listing submissions are limited to sellers who completed the trust flow.
 const verifiedSeller = (req, res, next) => {
-  if (req.user?.isAdmin) {
+  if (hasAdminAccess(req)) {
     return next()
   }
 
@@ -101,4 +106,4 @@ const verifiedSeller = (req, res, next) => {
   return next()
 }
 
-module.exports = { protect, admin, superAdmin, seller, verifiedSeller }
+module.exports = { protect, admin, superAdmin, seller, verifiedSeller, hasAdminAccess }

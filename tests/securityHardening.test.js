@@ -5,11 +5,11 @@ const jwt = require('jsonwebtoken')
 process.env.JWT_SECRET = process.env.JWT_SECRET || 'test-jwt-secret-that-is-long-enough-for-security-controls'
 process.env.OTP_SECRET = process.env.OTP_SECRET || 'test-otp-secret-that-is-long-enough-for-security-controls'
 
-const { createAccessToken } = require('../utils/authSession')
-const { getJwtVerificationOptions } = require('../utils/runtimeSecurity')
+const { ACCESS_COOKIE, createAccessToken } = require('../utils/authSession')
+const { getJwtSigningOptions, getJwtVerificationOptions } = require('../utils/runtimeSecurity')
 const { getAllowedOrigins, requireTrustedBrowserOrigin } = require('../utils/originPolicy')
 const { detectFileType, fileMatchesAllowedType, safeOriginalName } = require('../utils/fileValidation')
-const { admin, superAdmin } = require('../middleware/auth')
+const { admin, superAdmin, seller, protect } = require('../middleware/auth')
 const AuditLog = require('../models/auditLog')
 
 test('access tokens are bound to Glory issuer, audience and the expected algorithm', () => {
@@ -53,20 +53,40 @@ test('uploads require real supported file signatures and filenames are path-safe
   assert.equal(safeOriginalName('../../sensitive.pdf'), 'sensitive.pdf')
 })
 
-test('administrator and super-administrator middleware require server-side MFA-backed roles', () => {
-  const run = (middleware, user) => {
+test('administrator access requires MFA on the current server-side session', () => {
+  const run = (middleware, user, authSession) => {
     let statusCode
     let nextCalled = false
-    const req = { user }
+    const req = { user, authSession }
     const res = { status: (value) => { statusCode = value; return res }, json: () => res }
     middleware(req, res, () => { nextCalled = true })
     return { statusCode, nextCalled }
   }
 
-  assert.equal(run(admin, { isAdmin: true, twoFactor: { enabled: false } }).statusCode, 403)
-  assert.equal(run(admin, { isAdmin: true, twoFactor: { enabled: true } }).nextCalled, true)
-  assert.equal(run(superAdmin, { isAdmin: true, isSuperAdmin: false, twoFactor: { enabled: true } }).statusCode, 403)
-  assert.equal(run(superAdmin, { isSuperAdmin: true, twoFactor: { enabled: true } }).nextCalled, true)
+  const administrator = { isAdmin: true, twoFactor: { enabled: true } }
+  const verifiedSession = { mfaVerified: true }
+  assert.equal(run(admin, administrator, {}).statusCode, 403)
+  assert.equal(run(seller, administrator, {}).statusCode, 403)
+  assert.equal(run(seller, { isSeller: true }, {}).nextCalled, true)
+  assert.equal(run(admin, { ...administrator, twoFactor: { enabled: false } }, verifiedSession).statusCode, 403)
+  assert.equal(run(admin, administrator, verifiedSession).nextCalled, true)
+  assert.equal(run(superAdmin, administrator, verifiedSession).statusCode, 403)
+  assert.equal(run(superAdmin, { ...administrator, isSuperAdmin: true }, verifiedSession).nextCalled, true)
+})
+
+test('access cookies require a token type and expiration', async () => {
+  const options = getJwtSigningOptions()
+  const tokens = [
+    jwt.sign({ id: 'user', sessionId: 'session' }, process.env.JWT_SECRET, { ...options, expiresIn: '1m' }),
+    jwt.sign({ id: 'user', sessionId: 'session', type: 'access' }, process.env.JWT_SECRET, options)
+  ]
+  for (const token of tokens) {
+    const req = { cookies: { [ACCESS_COOKIE]: token } }
+    const replies = []
+    const res = { status: (value) => { replies.push(value); return res }, json: () => res }
+    await protect(req, res, () => assert.fail('Incomplete access token was accepted'))
+    assert.deepEqual(replies, [401])
+  }
 })
 
 test('audit records accept review events without losing the security trail', () => {

@@ -2,7 +2,7 @@ const express = require('express')
 const mongoose = require('mongoose')
 const router = express.Router()
 const Order = require('../models/order')
-const { protect, admin } = require('../middleware/auth')
+const { protect, admin, hasAdminAccess } = require('../middleware/auth')
 const { validateOrder, handleValidationErrors, paymentLimiter } = require('../middleware/security')
 const {
   aggregateOrderStatus,
@@ -18,15 +18,17 @@ const {
 const { getMarketplaceConfig } = require('../services/marketplaceService')
 const { sendOrderStatusEmail } = require('../utils/email')
 
-const canViewOrder = (order, user) => {
+const canViewOrder = (order, req) => {
+  const { user } = req
   const buyerId = order.buyer?._id || order.buyer
   const isOrderSeller = order.orderItems?.some(
     (item) => (item.seller?._id || item.seller)?.toString() === user._id.toString()
   )
-  return user.isAdmin || buyerId?.toString() === user._id.toString() || isOrderSeller
+  return hasAdminAccess(req) || buyerId?.toString() === user._id.toString() || isOrderSeller
 }
 
-const orderForUser = (order, user) => {
+const orderForUser = (order, req) => {
+  const { user } = req
   const value = order.toObject ? order.toObject() : order
   const buyerId = value.buyer?._id || value.buyer
   const isBuyer = buyerId?.toString() === user._id.toString()
@@ -34,17 +36,17 @@ const orderForUser = (order, user) => {
   delete value.paymentSourceId
   delete value.transferGroup
 
-  if (!user.isAdmin) {
+  if (!hasAdminAccess(req)) {
     delete value.processorFeePence
     delete value.platformNetPence
   }
 
-  if (!user.isAdmin && isBuyer) {
+  if (!hasAdminAccess(req) && isBuyer) {
     delete value.sellerAllocations
     delete value.platformFeeTotalPence
   }
 
-  if (!user.isAdmin && !isBuyer) {
+  if (!hasAdminAccess(req) && !isBuyer) {
     value.orderItems = (value.orderItems || []).filter(
       item => String(item.seller?._id || item.seller) === String(user._id)
     )
@@ -57,7 +59,7 @@ const orderForUser = (order, user) => {
     )
   }
 
-  if (!user.isAdmin) {
+  if (!hasAdminAccess(req)) {
     value.supportNotes = (value.supportNotes || []).filter(note => note.visibility !== 'admin')
   }
   return value
@@ -98,7 +100,7 @@ router.post('/', protect, requireDirectCheckout, validateOrder, handleValidation
   }
 
   const existing = await Order.findOne({ buyer: req.user._id, idempotencyKey })
-  if (existing) return res.json(orderForUser(existing, req.user))
+  if (existing) return res.json(orderForUser(existing, req))
 
   const session = await mongoose.startSession()
   let createdOrder
@@ -142,11 +144,11 @@ router.post('/', protect, requireDirectCheckout, validateOrder, handleValidation
       }], { session })
       createdOrder = order
     })
-    res.status(201).json(orderForUser(createdOrder, req.user))
+    res.status(201).json(orderForUser(createdOrder, req))
   } catch (error) {
     if (error.code === 11000) {
       const duplicate = await Order.findOne({ buyer: req.user._id, idempotencyKey })
-      if (duplicate) return res.json(orderForUser(duplicate, req.user))
+      if (duplicate) return res.json(orderForUser(duplicate, req))
     }
     handleError(res, error)
   } finally {
@@ -158,7 +160,7 @@ router.get('/myorders', protect, async (req, res) => {
   try {
     const orders = await Order.find({ buyer: req.user._id })
       .sort({ createdAt: -1 })
-    res.json(orders.map(order => orderForUser(order, req.user)))
+    res.json(orders.map(order => orderForUser(order, req)))
   } catch (error) {
     handleError(res, error)
   }
@@ -166,14 +168,14 @@ router.get('/myorders', protect, async (req, res) => {
 
 router.get('/seller', protect, async (req, res) => {
   try {
-    if (!req.user.isSeller && !req.user.isAdmin) {
+    if (!req.user.isSeller && !hasAdminAccess(req)) {
       return res.status(403).json({ message: 'Not authorized as seller' })
     }
-    const query = req.user.isAdmin ? {} : { 'orderItems.seller': req.user._id }
+    const query = hasAdminAccess(req) ? {} : { 'orderItems.seller': req.user._id }
     const orders = await Order.find(query)
       .populate('buyer', 'name email')
       .sort({ createdAt: -1 })
-    res.json(orders.map(order => orderForUser(order, req.user)))
+    res.json(orders.map(order => orderForUser(order, req)))
   } catch (error) {
     handleError(res, error)
   }
@@ -181,7 +183,7 @@ router.get('/seller', protect, async (req, res) => {
 
 router.put('/:id/fulfillment', protect, async (req, res) => {
   try {
-    if (!req.user.isSeller && !req.user.isAdmin) {
+    if (!req.user.isSeller && !hasAdminAccess(req)) {
       return res.status(403).json({ message: 'Not authorized as seller' })
     }
     const { itemId, status, trackingNumber = '' } = req.body
@@ -203,7 +205,7 @@ router.put('/:id/fulfillment', protect, async (req, res) => {
 
     const item = order.orderItems.id(itemId)
     if (!item) return res.status(404).json({ message: 'Order item not found' })
-    if (!req.user.isAdmin && item.seller.toString() !== req.user._id.toString()) {
+    if (!hasAdminAccess(req) && item.seller.toString() !== req.user._id.toString()) {
       return res.status(403).json({ message: 'Not authorized to update this item' })
     }
 
@@ -217,7 +219,7 @@ router.put('/:id/fulfillment', protect, async (req, res) => {
     aggregateOrderStatus(order)
     await order.save()
     await sendOrderStatusEmail({ order, status, trackingNumber: item.trackingNumber })
-    res.json(orderForUser(order, req.user))
+    res.json(orderForUser(order, req))
   } catch (error) {
     handleError(res, error)
   }
@@ -231,7 +233,7 @@ router.put('/:id/cancel', protect, async (req, res) => {
       const order = await Order.findById(req.params.id).session(session)
       if (!order) throw Object.assign(new Error('Order not found'), { statusCode: 404 })
       const buyerId = order.buyer?._id || order.buyer
-      if (!req.user.isAdmin && buyerId.toString() !== req.user._id.toString()) {
+      if (!hasAdminAccess(req) && buyerId.toString() !== req.user._id.toString()) {
         throw Object.assign(new Error('Not authorized to cancel this order'), { statusCode: 403 })
       }
       if (['Shipped', 'Delivered', 'Cancelled'].includes(order.status)) {
@@ -251,7 +253,7 @@ router.put('/:id/cancel', protect, async (req, res) => {
       }
       updatedOrder = await order.save({ session })
     })
-    res.json(orderForUser(updatedOrder, req.user))
+    res.json(orderForUser(updatedOrder, req))
   } catch (error) {
     handleError(res, error)
   } finally {
@@ -295,7 +297,7 @@ router.post('/:id/dispute', protect, async (req, res) => {
     })
     await order.save()
     await sendOrderStatusEmail({ order: await order.populate('buyer', 'name email'), status: 'Issue received' })
-    res.status(201).json(orderForUser(order, req.user))
+    res.status(201).json(orderForUser(order, req))
   } catch (error) {
     handleError(res, error)
   }
@@ -309,11 +311,11 @@ router.post('/:id/support-notes', protect, async (req, res) => {
     }
     const order = await Order.findById(req.params.id)
     if (!order) return res.status(404).json({ message: 'Order not found' })
-    if (!canViewOrder(order, req.user)) {
+    if (!canViewOrder(order, req)) {
       return res.status(403).json({ message: 'Not authorized to discuss this order' })
     }
     const buyerId = order.buyer?._id || order.buyer
-    const authorRole = req.user.isAdmin
+    const authorRole = hasAdminAccess(req)
       ? 'admin'
       : buyerId.toString() === req.user._id.toString() ? 'buyer' : 'seller'
     order.supportNotes.push({
@@ -323,7 +325,7 @@ router.post('/:id/support-notes', protect, async (req, res) => {
       visibility: 'participants'
     })
     await order.save()
-    res.status(201).json(orderForUser(order, req.user))
+    res.status(201).json(orderForUser(order, req))
   } catch (error) {
     handleError(res, error)
   }
@@ -333,10 +335,10 @@ router.get('/:id', protect, async (req, res) => {
   try {
     const order = await Order.findById(req.params.id).populate('buyer', 'name email')
     if (!order) return res.status(404).json({ message: 'Order not found' })
-    if (!canViewOrder(order, req.user)) {
+    if (!canViewOrder(order, req)) {
       return res.status(403).json({ message: 'Not authorized to view this order' })
     }
-    res.json(orderForUser(order, req.user))
+    res.json(orderForUser(order, req))
   } catch (error) {
     handleError(res, error)
   }
