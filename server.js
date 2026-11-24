@@ -90,7 +90,8 @@ app.use((req, res, next) => {
 app.use((req, res, next) => {
   const json = res.json.bind(res)
   res.json = (payload) => {
-    if (process.env.NODE_ENV === 'production' && res.statusCode >= 500 && payload?.message) {
+    if (process.env.NODE_ENV === 'production' && res.statusCode >= 500 && payload?.message
+      && !res.locals.isPublicVerificationFailure) {
       return json({ message: 'Something went wrong on our end.', requestId: req.requestId })
     }
     return json(payload)

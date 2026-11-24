@@ -134,13 +134,17 @@ const sendEmailVerificationSafely = async (user) => {
   }
 }
 
-const verificationDeliveryFailure = (res, user, status = 503) => res.status(status).json({
-  requiresEmailVerification: true,
-  verificationDeliveryFailed: true,
-  email: user.email,
-  isSeller: Boolean(user.isSeller),
-  message: 'Your account was saved, but the verification email could not be delivered. Try sending a new code shortly.'
-})
+const verificationDeliveryFailure = (res, user) => {
+  // This response contains fixed public copy and the signup details needed to retry.
+  res.locals.isPublicVerificationFailure = true
+  return res.status(503).json({
+    requiresEmailVerification: true,
+    verificationDeliveryFailed: true,
+    email: user.email,
+    isSeller: Boolean(user.isSeller),
+    message: 'Your account was saved, but the verification email could not be delivered. Try sending a new code shortly.'
+  })
+}
 
 const ensureTwoFactor = (user) => {
   if (!user.twoFactor) {
