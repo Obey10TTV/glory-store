@@ -73,7 +73,7 @@ const normalizeVerificationDocument = async (file) => {
 
 const campaignVideoTransform = (frame) => [
   frame,
-  { fetch_format: 'mp4', video_codec: 'h264', audio_codec: 'aac', flags: 'strip_profile' }
+  { fetch_format: 'mp4', video_codec: 'h264', audio_codec: 'aac' }
 ]
 
 const isNormalizedCampaignVideo = (asset) => (
