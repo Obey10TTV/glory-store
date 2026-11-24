@@ -12,12 +12,7 @@ const getEmailTransportConfig = (env = process.env) => {
     return {
       provider: 'resend',
       from,
-      transport: {
-        host: 'smtp.resend.com',
-        port: 465,
-        secure: true,
-        auth: { user: 'resend', pass: resendApiKey }
-      }
+      apiKey: resendApiKey
     }
   }
 
@@ -39,9 +34,33 @@ const getEmailTransportConfig = (env = process.env) => {
   }
 }
 
+const sendResendEmail = async (apiKey, message) => {
+  const response = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ ...message, to: [message.to] }),
+    redirect: 'error',
+    signal: AbortSignal.timeout(10000)
+  })
+
+  // Provider responses can include recipient details. Keep those out of logs.
+  await response.body?.cancel()
+  if (!response.ok) throw new Error(`Resend email request failed (HTTP ${response.status})`)
+}
+
 const getTransporter = () => {
   const config = getEmailTransportConfig()
-  if (!config) return null
+  if (!config?.from) return null
+
+  if (config.provider === 'resend') {
+    return {
+      mailer: { sendMail: (message) => sendResendEmail(config.apiKey, message) },
+      from: config.from
+    }
+  }
 
   const signature = JSON.stringify(config.transport)
   if (!transporter || transporterSignature !== signature) {
@@ -74,7 +93,7 @@ const sendOtpEmail = async ({ to, code, purpose = 'verify-email' }) => {
       purpose,
       to,
       code,
-      message: 'SMTP is not configured. This code is logged for local development only.'
+      message: 'Email is not configured. This code is logged for local development only.'
     })
     return
   }
@@ -145,7 +164,7 @@ const sendTrustSafetyAlert = async ({ reportId, listingId, reason, priority, tri
       type: 'TRUST_SAFETY_ALERT_SKIPPED',
       reportId,
       priority,
-      message: 'Configure TRUST_SAFETY_EMAIL and SMTP before public launch.'
+      message: 'Configure TRUST_SAFETY_EMAIL and email delivery before public launch.'
     })
     return false
   }

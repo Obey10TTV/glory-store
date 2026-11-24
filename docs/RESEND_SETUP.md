@@ -1,12 +1,12 @@
 # Resend setup for Glory account emails
 
-Glory supports Resend through its secure SMTP endpoint. Do not commit a Resend API key to GitHub or expose it to the frontend.
+Glory sends through the Resend HTTPS API when `RESEND_API_KEY` is set. This works on Railway Free and Hobby, where outbound SMTP is blocked. Do not commit the key to GitHub or expose it to the frontend.
 
 ## Before real email testing
 
 1. Create a Resend account.
 2. Add and verify the sending domain you want Glory to use.
-3. Create a server-side Resend API key.
+3. Create a server-side Resend API key with Sending access for the verified domain.
 4. Add these variables to the backend host:
 
 ```text
