@@ -1,10 +1,8 @@
 const jwt = require('jsonwebtoken')
 const User = require('../models/user')
-const { ACCESS_COOKIE } = require('../utils/authSession')
+const { ACCESS_COOKIE, SESSION_IDLE_MS } = require('../utils/authSession')
 const { getMarketplaceConfig } = require('../services/marketplaceService')
 const { getJwtVerificationOptions } = require('../utils/runtimeSecurity')
-
-const SESSION_IDLE_MS = Math.max(60 * 60 * 1000, Number(process.env.SESSION_IDLE_HOURS || 24) * 60 * 60 * 1000)
 
 // Protect any route - must be logged in
 const protect = async (req, res, next) => {
@@ -18,7 +16,7 @@ const protect = async (req, res, next) => {
         return res.status(401).json({ message: 'Not authorized, invalid token type' })
       }
       req.user = await User.findById(decoded.id).select(
-        '-password -emailVerification -twoFactor.pending -twoFactor.login -twoFactor.disable +isSuperAdmin'
+        '-password -emailVerification -twoFactor.pending -twoFactor.login -twoFactor.disable -twoFactor.recovery +isSuperAdmin'
       )
       if (!req.user) {
         return res.status(401).json({ message: 'User not found' })

@@ -43,7 +43,7 @@ const {
 const {
   REFRESH_COOKIE,
   clearAuthCookies,
-  createRefreshToken,
+  rotateRefreshSession,
   createSession,
   hashToken,
   issueCsrfToken,
@@ -227,30 +227,18 @@ router.post('/refresh', async (req, res) => {
       return res.status(401).json({ message: 'Refresh session is missing' })
     }
 
-    const tokenHash = hashToken(refreshToken)
-    const user = await User.findOne({
-      authSessions: {
-        $elemMatch: { tokenHash, expiresAt: { $gt: new Date() } }
-      }
-    })
-
-    if (!user) {
-      clearAuthCookies(res)
+    const rotation = await rotateRefreshSession(User, refreshToken)
+    if (!rotation) {
       return res.status(401).json({ message: 'Refresh session has expired' })
     }
 
-    const session = user.authSessions.find((item) => item.tokenHash === tokenHash)
-    const rotatedToken = createRefreshToken()
-    session.tokenHash = hashToken(rotatedToken)
-    session.lastUsedAt = new Date()
-    await user.save()
     setAuthCookies(res, {
-      userId: user._id,
-      sessionId: session.sessionId,
-      refreshToken: rotatedToken
+      userId: rotation.user._id,
+      sessionId: rotation.sessionId,
+      refreshToken: rotation.refreshToken
     })
 
-    res.json(getAuthPayload(user))
+    res.json(getAuthPayload(rotation.user))
   } catch (error) {
     handleRouteError(res, error)
   }
@@ -284,6 +272,9 @@ router.post('/register', validateRegister, handleValidationErrors, async (req, r
 
     if (userExists) {
       if (userExists.isEmailVerified === false) {
+        if (!(await userExists.matchPassword(password))) {
+          return res.status(400).json({ message: 'This email already has a pending signup. Sign in with its original password to continue verification.' })
+        }
         if (!(await sendEmailVerificationSafely(userExists))) {
           return verificationDeliveryFailure(res, userExists)
         }
@@ -595,21 +586,26 @@ router.post('/2fa/enable/confirm', protect, validateOtpOnly, handleValidationErr
       return res.status(404).json({ message: 'User not found' })
     }
 
-    ensureTwoFactor(user)
-    const result = verifyOtpChallenge(user.twoFactor?.pending, req.body.otp)
-    if (!result.valid) {
-      await user.save()
-      return res.status(400).json({ message: result.message })
+    const challenge = user.twoFactor?.pending
+    const result = verifyOtpChallenge(challenge, req.body.otp)
+    const recoveryCodes = generateRecoveryCodes()
+    const updated = await updateLoginChallenge(User, {
+      userId: user._id,
+      path: 'twoFactor.pending',
+      challenge,
+      valid: result.valid,
+      conditions: { 'twoFactor.enabled': { $ne: true } },
+      set: {
+        'twoFactor.enabled': true,
+        'twoFactor.login': {},
+        'twoFactor.recoveryCodeHashes': recoveryCodes.map(hashRecoveryCode)
+      }
+    })
+    if (!result.valid || !updated) {
+      return res.status(400).json({ message: result.message || 'Request a new two-factor setup code.' })
     }
 
-    user.twoFactor.enabled = true
-    user.twoFactor.pending = {}
-    user.twoFactor.login = {}
-    const recoveryCodes = generateRecoveryCodes()
-    user.twoFactor.recoveryCodeHashes = recoveryCodes.map(hashRecoveryCode)
-    await user.save()
-
-    res.json({ ...getAuthPayload(user), recoveryCodes })
+    res.json({ ...getAuthPayload(updated), recoveryCodes })
   } catch (error) {
     handleRouteError(res, error)
   }
@@ -645,21 +641,27 @@ router.post('/2fa/disable/confirm', protect, validateOtpOnly, handleValidationEr
       return res.status(404).json({ message: 'User not found' })
     }
 
-    ensureTwoFactor(user)
-    const result = verifyOtpChallenge(user.twoFactor?.disable, req.body.otp)
-    if (!result.valid) {
-      await user.save()
-      return res.status(400).json({ message: result.message })
+    const challenge = user.twoFactor?.disable
+    const result = verifyOtpChallenge(challenge, req.body.otp)
+    const updated = await updateLoginChallenge(User, {
+      userId: user._id,
+      path: 'twoFactor.disable',
+      challenge,
+      valid: result.valid,
+      conditions: { 'twoFactor.enabled': true, 'authSessions.sessionId': req.authSessionId },
+      set: {
+        'twoFactor.enabled': false,
+        'twoFactor.login': {},
+        'twoFactor.recovery': {},
+        'twoFactor.recoveryCodeHashes': [],
+        'authSessions.$[].mfaVerified': false
+      }
+    })
+    if (!result.valid || !updated) {
+      return res.status(400).json({ message: result.message || 'Request a new two-factor disable code.' })
     }
 
-    user.twoFactor.enabled = false
-    for (const session of user.authSessions) session.mfaVerified = false
-    user.twoFactor.disable = {}
-    user.twoFactor.login = {}
-    user.twoFactor.recoveryCodeHashes = []
-    await user.save()
-
-    res.json(getAuthPayload(user))
+    res.json(getAuthPayload(updated))
   } catch (error) {
     handleRouteError(res, error)
   }
@@ -674,8 +676,8 @@ router.post('/2fa/recovery/start', protect, async (req, res) => {
     ensureTwoFactor(user)
     await sendChallenge(
       user,
-      user.twoFactor.pending,
-      (challenge) => { user.twoFactor.pending = challenge },
+      user.twoFactor.recovery,
+      (challenge) => { user.twoFactor.recovery = challenge },
       'recovery-2fa'
     )
     res.json({ message: 'We sent a code to confirm recovery code regeneration.' })
@@ -690,15 +692,20 @@ router.post('/2fa/recovery/confirm', protect, validateOtpOnly, handleValidationE
     if (!user?.twoFactor?.enabled) {
       return res.status(400).json({ message: 'Enable two-factor authentication first.' })
     }
-    const result = verifyOtpChallenge(user.twoFactor.pending, req.body.otp)
-    if (!result.valid) {
-      await user.save()
-      return res.status(400).json({ message: result.message })
-    }
+    const challenge = user.twoFactor.recovery
+    const result = verifyOtpChallenge(challenge, req.body.otp)
     const recoveryCodes = generateRecoveryCodes()
-    user.twoFactor.recoveryCodeHashes = recoveryCodes.map(hashRecoveryCode)
-    user.twoFactor.pending = {}
-    await user.save()
+    const updated = await updateLoginChallenge(User, {
+      userId: user._id,
+      path: 'twoFactor.recovery',
+      challenge,
+      valid: result.valid,
+      conditions: { 'twoFactor.enabled': true },
+      set: { 'twoFactor.recoveryCodeHashes': recoveryCodes.map(hashRecoveryCode) }
+    })
+    if (!result.valid || !updated) {
+      return res.status(400).json({ message: result.message || 'Request a new recovery confirmation code.' })
+    }
     res.json({ message: 'New recovery codes created.', recoveryCodes })
   } catch (error) {
     handleRouteError(res, error)
@@ -1000,6 +1007,9 @@ router.put('/profile', protect, authLimiter, validateUpdateProfile, handleValida
       user.password = req.body.password
       user.authSessions = []
       user.twoFactor.login = {}
+      user.twoFactor.disable = {}
+      user.twoFactor.pending = {}
+      user.twoFactor.recovery = {}
     }
 
     const updatedUser = await user.save()

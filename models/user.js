@@ -112,6 +112,10 @@ const userSchema = new mongoose.Schema({
       type: otpChallengeSchema,
       default: () => ({})
     },
+    recovery: {
+      type: otpChallengeSchema,
+      default: () => ({})
+    },
     recoveryCodeHashes: {
       type: [String],
       default: []

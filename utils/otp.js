@@ -49,8 +49,6 @@ const verifyOtpChallenge = (challenge, otp) => {
     return { valid: false, message: 'Too many incorrect codes. Please request a new code.' }
   }
 
-  challenge.attempts = (challenge.attempts || 0) + 1
-
   if (!matchesHash(hashOtp(otp), challenge.codeHash)) {
     return { valid: false, message: 'Verification code is incorrect.' }
   }

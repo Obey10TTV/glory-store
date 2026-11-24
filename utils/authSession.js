@@ -7,6 +7,8 @@ const REFRESH_COOKIE = 'glory_refresh'
 const CSRF_COOKIE = 'glory_csrf'
 const ACCESS_TOKEN_TTL = process.env.ACCESS_TOKEN_TTL || '15m'
 const REFRESH_DAYS = Math.max(1, Number(process.env.REFRESH_TOKEN_DAYS || 7))
+const idleHours = Number(process.env.SESSION_IDLE_HOURS || 24)
+const SESSION_IDLE_MS = Math.max(1, Number.isFinite(idleHours) ? idleHours : 24) * 60 * 60 * 1000
 
 const hashToken = (value) => crypto.createHash('sha256').update(String(value)).digest('hex')
 
@@ -24,6 +26,29 @@ const createAccessToken = (userId, sessionId) => jwt.sign(
 )
 
 const createRefreshToken = () => crypto.randomBytes(48).toString('base64url')
+
+const rotateRefreshSession = async (User, refreshToken, now = new Date()) => {
+  const replacement = createRefreshToken()
+  const nextHash = hashToken(replacement)
+  const idleCutoff = new Date(now.getTime() - SESSION_IDLE_MS)
+  const user = await User.findOneAndUpdate({
+    authSessions: {
+      $elemMatch: {
+        tokenHash: hashToken(refreshToken),
+        expiresAt: { $gt: now },
+        $or: [
+          { lastUsedAt: { $gt: idleCutoff } },
+          { lastUsedAt: null, createdAt: { $gt: idleCutoff } }
+        ]
+      }
+    }
+  }, {
+    $set: { 'authSessions.$.tokenHash': nextHash, 'authSessions.$.lastUsedAt': now }
+  }, { new: true })
+
+  const session = user?.authSessions.find((item) => item.tokenHash === nextHash)
+  return session ? { user, sessionId: session.sessionId, refreshToken: replacement } : null
+}
 
 const getDeviceLabel = (userAgent = '') => {
   const value = String(userAgent).slice(0, 240)
@@ -96,6 +121,8 @@ module.exports = {
   hashToken,
   createAccessToken,
   createRefreshToken,
+  rotateRefreshSession,
+  SESSION_IDLE_MS,
   createSession,
   setAuthCookies,
   clearAuthCookies,
