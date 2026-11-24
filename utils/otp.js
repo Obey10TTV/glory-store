@@ -15,6 +15,12 @@ const hashOtp = (otp) => (
     .digest('hex')
 )
 
+const matchesHash = (left, right) => {
+  const a = Buffer.from(left)
+  const b = Buffer.from(right)
+  return a.length === b.length && crypto.timingSafeEqual(a, b)
+}
+
 const createOtpChallenge = (otp, minutes = OTP_EXPIRY_MINUTES) => ({
   codeHash: hashOtp(otp),
   expiresAt: new Date(Date.now() + minutes * 60 * 1000),
@@ -45,7 +51,7 @@ const verifyOtpChallenge = (challenge, otp) => {
 
   challenge.attempts = (challenge.attempts || 0) + 1
 
-  if (hashOtp(otp) !== challenge.codeHash) {
+  if (!matchesHash(hashOtp(otp), challenge.codeHash)) {
     return { valid: false, message: 'Verification code is incorrect.' }
   }
 
@@ -61,9 +67,30 @@ const hashRecoveryCode = (code) => hashOtp(String(code).replace(/\s/g, '').toUpp
 
 const consumeRecoveryCode = (hashes = [], code) => {
   const target = hashRecoveryCode(code)
-  const index = hashes.findIndex((value) => value === target)
+  const index = hashes.findIndex((value) => matchesHash(value, target))
   if (index === -1) return { valid: false, hashes }
   return { valid: true, hashes: hashes.filter((_, itemIndex) => itemIndex !== index) }
+}
+
+// Keep verification and consumption conditional on the exact challenge read.
+// Concurrent requests, resends and expired challenges cannot reuse that state.
+const updateLoginChallenge = (User, { userId, path, challenge, valid, conditions, set = {}, pull }) => {
+  if (!challenge?.codeHash || !challenge.lastSentAt) return null
+
+  return User.findOneAndUpdate({
+    ...conditions,
+    _id: userId,
+    [`${path}.codeHash`]: challenge.codeHash,
+    [`${path}.lastSentAt`]: challenge.lastSentAt,
+    [`${path}.expiresAt`]: { $gt: new Date() },
+    [`${path}.attempts`]: { $lt: OTP_MAX_ATTEMPTS }
+  }, valid
+    ? {
+        $set: { ...set, [path]: {} },
+        ...(pull ? { $pull: pull } : {})
+      }
+    : { $inc: { [`${path}.attempts`]: 1 } },
+  { new: true })
 }
 
 module.exports = {
@@ -71,6 +98,7 @@ module.exports = {
   createOtpChallenge,
   isInCooldown,
   verifyOtpChallenge,
+  updateLoginChallenge,
   generateRecoveryCodes,
   hashRecoveryCode,
   consumeRecoveryCode

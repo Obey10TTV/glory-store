@@ -63,7 +63,7 @@ test('public product JSON never exposes private listing evidence', () => {
   assert.equal(publicProduct.listingEvidence.declarationAccepted, undefined)
 })
 
-test('public product JSON may expose an on-chain proof reference without private evidence', () => {
+test('public product JSON hides retired proof data and private evidence', () => {
   const product = new Product({
     name: 'Verified Repair Serum',
     price: 24,
@@ -82,8 +82,7 @@ test('public product JSON may expose an on-chain proof reference without private
   })
 
   const publicProduct = product.toJSON()
-  assert.equal(publicProduct.suiVerification.status, 'verified')
-  assert.equal(publicProduct.suiVerification.attestationHash, 'a'.repeat(64))
+  assert.equal(publicProduct.suiVerification, undefined)
   assert.equal(publicProduct.listingEvidence.batchCode, undefined)
 })
 

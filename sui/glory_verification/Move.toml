@@ -1,6 +1,0 @@
-[package]
-name = "glory_verification"
-edition = "2024.beta"
-
-[addresses]
-glory_verification = "0x0"

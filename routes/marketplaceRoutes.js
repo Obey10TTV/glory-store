@@ -9,8 +9,6 @@ const {
   getSellerPlans,
   normalizeMarketCode
 } = require('../services/marketplaceService')
-const { getSuiConfig } = require('../utils/suiConfig')
-
 const router = express.Router()
 
 const publicSellerPlan = (plan) => ({
@@ -55,19 +53,6 @@ router.get('/config', (req, res) => {
     ...marketplace,
     sellerPlans: getSellerPlans(marketCode).map(publicSellerPlan),
     promotionPlans: getPromotionPlans(marketCode).map(publicPromotionPlan)
-  })
-})
-
-// This deliberately exposes capability status only. It never exposes a key,
-// wallet address, or internal RPC configuration to the browser.
-router.get('/sui/status', (req, res) => {
-  const config = getSuiConfig()
-  res.json({
-    network: config.network,
-    verificationEnabled: config.enabled,
-    paymentEnabled: false,
-    packageConfigured: Boolean(config.packageId),
-    registryConfigured: Boolean(config.registryObjectId)
   })
 })
 

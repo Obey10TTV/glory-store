@@ -41,7 +41,6 @@ const { httpLogger, logger, sanitizeErrorMessage } = require('./middleware/logge
 const { csrfProtection } = require('./middleware/csrf')
 const { getAllowedOrigins, requireTrustedBrowserOrigin } = require('./utils/originPolicy')
 const { assertProductionSecurityConfig } = require('./utils/runtimeSecurity')
-const { assertSuiConfiguration } = require('./utils/suiConfig')
 const { releaseExpiredReservations } = require('./services/reservationService')
 const { migrateLegacyProductReviews } = require('./services/reviewMigrationService')
 const { migrateLegacyMarketplaceRecords } = require('./services/marketMigrationService')
@@ -51,7 +50,6 @@ const app = express()
 app.disable('x-powered-by')
 
 assertProductionSecurityConfig()
-assertSuiConfiguration()
 const allowedOrigins = getAllowedOrigins()
 
 const corsOptions = {
@@ -82,7 +80,7 @@ app.set('trust proxy', 1)
 
 // 2. HTTP Logger
 app.use((req, res, next) => {
-  req.requestId = String(req.get('x-request-id') || randomUUID()).slice(0, 100)
+  req.requestId = randomUUID()
   res.setHeader('X-Request-ID', req.requestId)
   next()
 })
@@ -148,7 +146,8 @@ app.use(generalLimiter)
 // Authenticated or financial data must never be shared through a browser or CDN cache.
 app.use([
   '/api/users', '/api/admin', '/api/orders', '/api/upload', '/api/conversations',
-  '/api/reports', '/api/reviews', '/api/stripe', '/api/skin-guide'
+  '/api/reports', '/api/reviews', '/api/stripe', '/api/skin-guide',
+  '/api/products/mine', '/api/marketplace/seller', '/api/promotions/mine', '/api/promotions/availability'
 ], (req, res, next) => {
   res.setHeader('Cache-Control', 'no-store, private')
   res.setHeader('Pragma', 'no-cache')
@@ -180,7 +179,7 @@ const connectDatabase = async () => {
     await ensurePromotionSchedulingIndexes()
     await runPromotionMaintenance()
   } catch (err) {
-    logger.error('MongoDB connection error:', err)
+    logger.error({ type: 'DATABASE_STARTUP_FAILED', message: sanitizeErrorMessage(err.message) })
   }
 }
 

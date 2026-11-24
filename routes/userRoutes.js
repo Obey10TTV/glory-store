@@ -7,6 +7,7 @@ const Product = require('../models/product')
 const Review = require('../models/review')
 const { protect } = require('../middleware/auth')
 const {
+  authLimiter,
   validateRegister,
   validateLogin,
   validateGoogleAuth,
@@ -24,6 +25,7 @@ const {
   createOtpChallenge,
   isInCooldown,
   verifyOtpChallenge,
+  updateLoginChallenge,
   generateRecoveryCodes,
   hashRecoveryCode,
   consumeRecoveryCode
@@ -471,18 +473,22 @@ router.post('/verify-email', validateEmailOtp, handleValidationErrors, async (re
       return res.status(400).json({ message: 'This email is already verified. Please sign in.' })
     }
 
-    const result = verifyOtpChallenge(user.emailVerification, otp)
-    if (!result.valid) {
-      await user.save()
-      return res.status(400).json({ message: result.message })
+    const challenge = user.emailVerification
+    const result = verifyOtpChallenge(challenge, otp)
+    const verifiedUser = await updateLoginChallenge(User, {
+      userId: user._id,
+      path: 'emailVerification',
+      challenge,
+      valid: result.valid,
+      conditions: { isEmailVerified: false },
+      set: { isEmailVerified: true }
+    })
+    if (!result.valid || !verifiedUser) {
+      return res.status(400).json({ message: result.message || 'Verification code is invalid.' })
     }
 
-    user.isEmailVerified = true
-    user.emailVerification = {}
-    await user.save()
-
-    await establishSession(user, req, res)
-    res.json(getAuthPayload(user))
+    await establishSession(verifiedUser, req, res)
+    res.json(getAuthPayload(verifiedUser))
   } catch (error) {
     handleRouteError(res, error)
   }
@@ -524,20 +530,31 @@ router.post('/2fa/verify-login', validateSecondFactor, handleValidationErrors, a
     const recoveryResult = isOtp
       ? null
       : consumeRecoveryCode(user.twoFactor.recoveryCodeHashes || [], otp)
+    const challenge = user.twoFactor.login
     const result = isOtp
-      ? verifyOtpChallenge(user.twoFactor.login, otp)
+      ? verifyOtpChallenge(challenge, otp)
       : { valid: recoveryResult.valid, message: 'Recovery code is invalid or has already been used.' }
-    if (!result.valid) {
-      await user.save()
-      return res.status(400).json({ message: result.message })
+    const conditions = { 'twoFactor.enabled': true, isEmailVerified: { $ne: false } }
+    let pull
+    if (recoveryResult?.valid) {
+      const recoveryHash = hashRecoveryCode(otp)
+      conditions['twoFactor.recoveryCodeHashes'] = recoveryHash
+      pull = { 'twoFactor.recoveryCodeHashes': recoveryHash }
+    }
+    const verifiedUser = await updateLoginChallenge(User, {
+      userId: user._id,
+      path: 'twoFactor.login',
+      challenge,
+      valid: result.valid,
+      conditions,
+      pull
+    })
+    if (!result.valid || !verifiedUser) {
+      return res.status(400).json({ message: result.message || 'Verification code is invalid or expired.' })
     }
 
-    if (recoveryResult?.valid) {
-      user.twoFactor.recoveryCodeHashes = recoveryResult.hashes
-    }
-    user.twoFactor.login = {}
-    await establishSession(user, req, res)
-    res.json(getAuthPayload(user))
+    await establishSession(verifiedUser, req, res)
+    res.json(getAuthPayload(verifiedUser))
   } catch (error) {
     handleRouteError(res, error)
   }
@@ -961,7 +978,7 @@ router.put('/seller-profile', protect, validateSellerProfile, handleValidationEr
 })
 
 // UPDATE PROFILE
-router.put('/profile', protect, validateUpdateProfile, handleValidationErrors, async (req, res) => {
+router.put('/profile', protect, authLimiter, validateUpdateProfile, handleValidationErrors, async (req, res) => {
   try {
     const user = await User.findById(req.user._id)
 
@@ -971,10 +988,16 @@ router.put('/profile', protect, validateUpdateProfile, handleValidationErrors, a
 
     user.name = req.body.name || user.name
     if (req.body.password) {
+      if (!user.password || !(await user.matchPassword(req.body.currentPassword))) {
+        return res.status(403).json({ message: 'Current password is incorrect.' })
+      }
       user.password = req.body.password
+      user.authSessions = []
+      user.twoFactor.login = {}
     }
 
     const updatedUser = await user.save()
+    if (req.body.password) clearAuthCookies(res)
     res.json(getAuthPayload(updatedUser))
   } catch (error) {
     res.status(500).json({ message: error.message })

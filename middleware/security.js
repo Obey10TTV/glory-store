@@ -271,6 +271,12 @@ const validateRegister = [
 ]
 
 const validateUpdateProfile = [
+  body('currentPassword')
+    .if(body('password').notEmpty())
+    .isString()
+    .bail()
+    .isLength({ min: 1, max: 128 })
+    .withMessage('Enter your current password to change it'),
   body('name')
     .optional()
     .trim()

@@ -37,25 +37,6 @@ const listingEvidenceSchema = new mongoose.Schema({
   reviewedAt: Date
 }, { _id: false })
 
-// This is deliberately a proof reference only. Product documents, supplier
-// records and identity information remain in Glory's private systems.
-const suiVerificationSchema = new mongoose.Schema({
-  status: {
-    type: String,
-    enum: ['not_requested', 'pending', 'verified', 'revoked'],
-    default: 'not_requested',
-    index: true
-  },
-  network: { type: String, enum: ['testnet'], default: 'testnet' },
-  attestationHash: { type: String, trim: true, lowercase: true, maxlength: 128, default: '' },
-  packageId: { type: String, trim: true, maxlength: 100, default: '' },
-  registryObjectId: { type: String, trim: true, maxlength: 100, default: '' },
-  objectId: { type: String, trim: true, maxlength: 100, default: '' },
-  transactionDigest: { type: String, trim: true, maxlength: 128, default: '' },
-  verifiedAt: Date,
-  revokedAt: Date
-}, { _id: false })
-
 const imageProcessingSchema = new mongoose.Schema({
   originalImageUrl: { type: String, trim: true, default: '' },
   sourcePublicId: { type: String, trim: true, default: '' },
@@ -147,17 +128,17 @@ const productSchema = new mongoose.Schema({
   approvedAt: Date,
   reviewedAt: Date,
   listingEvidence: { type: listingEvidenceSchema, default: () => ({}) },
-  suiVerification: { type: suiVerificationSchema, default: () => ({}) }
+  // Exclude retired proof metadata from existing records.
+  suiVerification: { type: mongoose.Schema.Types.Mixed, select: false }
 }, { timestamps: true })
 
 productSchema.index({ name: 'text', brand: 'text', description: 'text', category: 'text' })
 productSchema.index({ marketCode: 1, approvalStatus: 1, category: 1, productType: 1, brand: 1, price: 1, createdAt: -1 })
 productSchema.index({ seller: 1, countInStock: 1 })
 productSchema.index({ seller: 1, planVisibilityStatus: 1, createdAt: 1 })
-productSchema.index({ 'suiVerification.attestationHash': 1 }, { sparse: true })
-
 productSchema.set('toJSON', {
   transform: (doc, ret) => {
+    delete ret.suiVerification
     if (ret.listingEvidence) {
       delete ret.listingEvidence.batchCode
       delete ret.listingEvidence.expiryOrPao
