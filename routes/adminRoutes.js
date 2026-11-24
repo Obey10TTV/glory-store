@@ -427,11 +427,14 @@ router.get('/users/:id/documents/:documentId', protect, admin, async (req, res) 
     const document = user?.sellerProfile?.documents?.id(req.params.documentId)
     if (!document) return res.status(404).json({ message: 'Verification document not found' })
 
-    const url = cloudinary.utils.private_download_url(document.publicId, document.format || (document.mimeType === 'application/pdf' ? 'pdf' : 'jpg'), {
+    const format = document.resourceType === 'raw' && document.publicId.endsWith('.pdf')
+      ? undefined
+      : document.format || (document.mimeType === 'application/pdf' ? 'pdf' : 'jpg')
+    const url = cloudinary.utils.private_download_url(document.publicId, format, {
       type: 'authenticated',
       resource_type: document.resourceType,
       expires_at: Math.floor(Date.now() / 1000) + 300,
-      attachment: false
+      attachment: true
     })
     res.json({ url, expiresIn: 300 })
   } catch (error) {
